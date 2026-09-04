@@ -1,0 +1,333 @@
+/* Deckster — touch control surface.
+ * Recreated from the Claude Design handoff (design tokens are load-bearing).
+ * Vanilla CSS, system fonts, flexbox/grid, SVG dial — targets old Android WebView.
+ * Landscape is primary; portrait is a stacked fallback; scales up to tablets. */
+
+:root{
+  --canvas:#08090b; --bezel:#050506; --screen:#0a0b0d;
+  --panel:#101116; --panel2:#111319; --card:#14161b; --card2:#15171d;
+  --track:#191b21;
+  --line:#16181d; --line2:#22252d; --line3:#2c2f37;
+  --ink:#f2f3f5; --ink2:#c2c6cf; --sub:#9a9ea8; --muted:#6b6f78; --muted2:#5c606a;
+  --dim:#33363e;
+  --green:#4ddb7f; --green-txt:#7fe0a3;
+  --pink:#ff7ab8;
+  --amber:#ffb84d;
+  --red:#e05a5a; --red-tint:#f09a9a;
+  --mute-bg:#3a1d20; --mute-border:#5a2b2f; --mute-icon:#f2b5b5;
+}
+
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;}
+body{
+  background:var(--screen); color:var(--ink);
+  font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:none;}
+.hidden{display:none !important;}
+.spacer{flex:1;}
+.noscroll{scrollbar-width:none;-ms-overflow-style:none;}
+.noscroll::-webkit-scrollbar{display:none;height:0;width:0;}
+
+.app{
+  position:fixed; inset:0; display:flex; flex-direction:column;
+  background:var(--screen); overflow:hidden;
+  transition:filter .6s ease;
+  /* Keep content clear of display cutouts (punch-holes/notches) on any phone,
+     any orientation — env() is 0 where there's no cutout, so no wasted space. */
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  box-sizing:border-box;
+}
+/* resting: dim + a slow whole-UI pixel drift so no bright pixel stays put (OLED) */
+.app.resting{filter:brightness(.42) saturate(.7); animation:oledShift 40s ease-in-out infinite; will-change:transform;}
+@keyframes oledShift{
+  0%{transform:translate(0,0);} 25%{transform:translate(2px,-2px);}
+  50%{transform:translate(-2px,2px);} 75%{transform:translate(2px,2px);}
+  100%{transform:translate(0,0);}
+}
+
+/* ---- top bar ---- */
+.topbar{
+  flex:none; display:flex; align-items:center; gap:8px;
+  padding:6px 12px; border-bottom:1px solid var(--line);
+  min-height:34px;
+}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 7px var(--green);flex:none;}
+.conn-dot.warn{background:var(--amber);box-shadow:0 0 7px var(--amber);animation:scpulse 1s ease-in-out infinite;}
+.conn-dot.err{background:var(--red);box-shadow:none;}
+.conn-text{font-size:11px;font-weight:700;color:var(--green-txt);}
+.topbar-div{width:1px;height:14px;background:var(--line2);margin:0 2px;flex:none;}
+.dial-badge{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;background:#7c8cff;color:#0c0d10;flex:none;}
+.dial-badge.has-icon,.tile-badge.has-icon{background-size:contain;background-repeat:no-repeat;background-position:center;}
+.dial-source{font-size:13px;font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38vw;}
+.tabs{display:flex;gap:2px;background:var(--panel2);border:1px solid var(--line2);border-radius:9px;padding:2px;flex:none;}
+.tab{padding:5px 11px;border-radius:7px;font-size:11px;font-weight:800;background:transparent;color:var(--sub);}
+.tab--on{background:#2a2f3a;color:var(--ink);}
+
+/* ---- pager ---- */
+.pager{flex:1;min-height:0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;}
+.page{flex:none;width:100%;height:100%;scroll-snap-align:start;}
+
+/* ---- mixer page (landscape 3 zones) ---- */
+.page-mixer{display:flex;flex-direction:row;}
+.zone{display:flex;flex-direction:column;min-height:0;}
+.zone-label{font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--muted);}
+
+.zone-system{width:clamp(96px,13vw,190px);flex:none;padding:12px 9px;gap:8px;border-right:1px solid var(--line);}
+.sys-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  border-radius:15px;background:var(--card2);border:1px solid var(--line2);padding:4px;}
+.sys-btn.on-mic{background:rgba(255,122,184,.09);border-color:rgba(255,122,184,.4);}
+.sys-btn.muted{background:var(--mute-bg);border-color:var(--mute-border);}
+.sys-ico{display:flex;align-items:center;justify-content:center;}
+.sys-cap{font-size:11px;font-weight:800;letter-spacing:.3px;color:var(--ink);text-align:center;line-height:1.15;}
+
+.zone-apps{flex:1;min-width:0;padding:12px 14px;gap:8px;}
+/* Standard-size app control boxes: fixed row height, packed to the top, with the
+   list scrolling if there are many apps (rather than stretching to fill space). */
+.apps-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:104px;align-content:start;gap:10px;overflow-y:auto;}
+.tile{display:flex;flex-direction:column;justify-content:space-between;padding:11px 12px;border-radius:16px;
+  background:var(--card);border:1px solid var(--line2);text-align:left;min-width:0;}
+.tile.on{/* accent bg/border set inline */}
+.tile.silent{opacity:.62;}
+/* reorder (Android home-screen style): lifted tile leaves a dashed empty slot,
+   a floating clone follows the finger. */
+.tile.tile-drag-src{background:transparent;border:1px dashed var(--line3);box-shadow:none;}
+.tile.tile-drag-src>*{visibility:hidden;}
+.tile-drag-clone{position:fixed;z-index:60;margin:0;pointer-events:none;
+  box-shadow:0 18px 40px rgba(0,0,0,.55);transform:scale(1.04);opacity:.97;}
+/* children default to pointer-events:auto, so without this the clone's own spans
+   win elementFromPoint and the tile beneath is never found (no reorder). */
+.tile-drag-clone *{pointer-events:none;}
+.tile-top{display:flex;align-items:center;gap:8px;}
+.tile-badge{flex:none;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#0c0d10;}
+.tile-name{flex:1;min-width:0;font-size:14px;font-weight:700;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tile-bot{display:flex;align-items:flex-end;justify-content:space-between;gap:6px;}
+.tile-pct{font-size:20px;font-weight:800;letter-spacing:-.5px;color:var(--ink);}
+.tile-pct.muted{color:#71757e;}
+.tile-pct.idle{font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--muted);}
+.tile-chips{display:flex;align-items:center;gap:7px;flex:none;}
+.chip{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);flex:none;}
+.chip.muted{background:var(--mute-bg);border-color:var(--mute-border);}
+.chip.mic{background:rgba(255,122,184,.10);border-color:rgba(255,122,184,.28);}
+.chip.mic.muted{background:var(--mute-bg);border-color:var(--mute-border);}
+/* unbound mic chip reads as a quiet "add a hotkey" affordance */
+.chip.mic.ghost{background:transparent;border-style:dashed;border-color:rgba(255,255,255,.14);opacity:.6;}
+
+.zone-dial{width:clamp(236px,34vw,330px);flex:none;border-left:1px solid var(--line);
+  display:flex;flex-direction:row;align-items:center;padding:12px 10px;gap:8px;}
+/* mix-target identity (icon over a short name) stacked ABOVE the App/Sys/Mic
+   selector, so the controls form one narrow column — freeing width for the apps
+   zone — while the dial still runs the full height beside them. */
+.dial-controls{flex:none;display:flex;flex-direction:column;align-items:center;gap:10px;}
+.dial-appid{display:flex;flex-direction:column;align-items:center;gap:5px;width:56px;}
+.dial-app-icon{width:34px;height:34px;border-radius:9px;object-fit:contain;flex:none;}
+.dial-app-badge{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;color:#0c0d10;flex:none;}
+.dial-source{font-size:11px;font-weight:800;color:var(--ink2);text-align:center;line-height:1.1;
+  max-width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mode-switch{flex:none;align-self:center;display:flex;flex-direction:column;gap:3px;
+  background:var(--panel2);border:1px solid var(--line2);border-radius:13px;padding:3px;}
+.mode-btn{width:46px;padding:12px 0;border-radius:9px;font-size:12px;font-weight:800;background:transparent;color:var(--sub);}
+.mode-btn--on{background:#2a2f3a;color:var(--ink);}
+.dial-host{flex:1;min-width:0;align-self:stretch;display:flex;align-items:center;justify-content:center;}
+.dial-host svg{display:block;width:100%;height:100%;overflow:visible;}
+
+/* ---- devices page ---- */
+.page-devices{display:flex;flex-direction:column;padding:12px 16px 14px;gap:10px;}
+.dev-head{flex:none;display:flex;align-items:center;gap:9px;}
+.dev-back{width:32px;height:32px;border-radius:10px;background:var(--card2);border:1px solid var(--line3);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:var(--ink2);}
+.dev-title{font-size:14px;font-weight:800;color:var(--ink);}
+.dev-hint{font-size:11px;font-weight:600;color:var(--muted);}
+.dev-cols{flex:1;min-height:0;display:flex;gap:12px;}
+.dev-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;overflow-y:auto;}
+.dev-col-head{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;letter-spacing:1.2px;color:var(--sub);}
+.dev-row{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:13px;background:transparent;border:1px solid #1f222a;text-align:left;min-width:0;width:100%;box-sizing:border-box;}
+.dev-check{flex:none;width:22px;height:22px;border-radius:50%;border:2px solid var(--dim);background:transparent;display:flex;align-items:center;justify-content:center;}
+.dev-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.dev-name{font-size:13px;font-weight:700;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dev-sub{font-size:10px;font-weight:500;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dev-meter{flex:none;display:flex;align-items:flex-end;gap:2px;height:26px;}
+.dev-meter span{width:3px;border-radius:2px;}
+
+/* ---- connection banner ---- */
+.banner{flex:none;display:flex;align-items:center;gap:12px;padding:10px 14px;font-size:13px;}
+.banner .b-dot{width:10px;height:10px;border-radius:50%;flex:none;}
+.banner .b-title{font-weight:800;}
+.banner .b-sub{font-size:12px;}
+.banner .b-right{margin-left:auto;font-size:11px;font-weight:700;}
+.banner.reconnecting{background:rgba(255,184,77,.09);border-bottom:1px solid rgba(255,184,77,.3);}
+.banner.reconnecting .b-dot{background:var(--amber);animation:scpulse 1s ease-in-out infinite;}
+.banner.reconnecting .b-title{color:#ffcf88;} .banner.reconnecting .b-sub{color:#a9895a;} .banner.reconnecting .b-right{color:#8a7043;}
+.banner.disconnected{background:rgba(224,90,90,.09);border-bottom:1px solid rgba(224,90,90,.32);}
+.banner.disconnected .b-dot{background:var(--red);} .banner.disconnected .b-title{color:var(--red-tint);} .banner.disconnected .b-sub{color:#a97070;}
+
+/* ---- error toast ---- */
+.toast{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:40;
+  display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:16px;max-width:min(92vw,420px);
+  background:#17151a;border:1px solid #3a2a2c;box-shadow:0 14px 30px rgba(0,0,0,.5);}
+.toast .t-ico{flex:none;width:34px;height:34px;border-radius:10px;background:rgba(224,90,90,.14);display:flex;align-items:center;justify-content:center;}
+.toast .t-title{font-size:14px;font-weight:800;color:var(--ink);}
+.toast .t-sub{font-size:12px;color:#8b8f99;}
+.toast .t-x{flex:none;font-size:18px;color:var(--muted2);padding:0 4px;}
+
+/* ---- pairing overlay ---- */
+.pair{position:fixed;inset:0;z-index:90;background:rgba(10,11,13,.98);display:flex;align-items:center;justify-content:center;
+  overflow:auto;-webkit-overflow-scrolling:touch;
+  padding:calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));}
+.pair-card{width:100%;max-width:340px;text-align:center;margin:auto;}  /* margin auto centres yet still scrolls when too tall */
+.pair-title{font-size:22px;font-weight:800;margin-bottom:6px;}
+.pair-hint{color:var(--sub);font-size:14px;margin-bottom:18px;}
+.pair-cells{display:flex;gap:8px;justify-content:center;margin-bottom:10px;}
+.pair-cell{flex:1;max-width:46px;height:56px;border-radius:12px;background:var(--card);border:1px solid #23262e;
+  display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:var(--ink);}
+.pair-cell.active{border-color:#56c2ff;background:rgba(86,194,255,.1);}
+.pair-cell.filled{border-color:var(--dim);}
+.pair.error .pair-cell{border-color:var(--mute-border);background:rgba(224,90,90,.08);}
+.pair-err{color:var(--red);min-height:16px;font-size:12px;margin-bottom:10px;}
+.pair-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+.pair-key{height:52px;border-radius:14px;background:var(--card2);border:1px solid var(--line2);font-size:20px;font-weight:700;color:var(--ink);}
+.pair-key.blank{background:transparent;border:none;}
+.pair-btn{width:100%;height:54px;border-radius:16px;font-size:16px;font-weight:800;background:#56c2ff;color:#0c0d10;}
+.pair-btn:disabled{background:#1b1d23;color:var(--muted2);cursor:not-allowed;}
+.pair-note{margin-top:12px;font-size:11px;color:var(--muted2);}
+/* primary "scan QR" action on the pairing screen */
+.pair-scan{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:50px;margin-bottom:16px;
+  border-radius:14px;background:#56c2ff;color:#0c0d10;font-size:15px;font-weight:800;border:none;}
+.pair-scan svg{flex:none;}
+
+/* camera scanner overlay */
+.scanner{position:fixed;inset:0;z-index:95;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));}
+.scanner.hidden{display:none;}
+.scanner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.scan-frame{position:relative;width:min(64vw,64vh);aspect-ratio:1/1;border:3px solid rgba(255,255,255,.9);border-radius:20px;box-shadow:0 0 0 100vmax rgba(0,0,0,.45);}
+.scan-hint{position:relative;margin-top:22px;font-size:14px;font-weight:700;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.8);}
+.scan-err{position:relative;margin-top:8px;min-height:16px;font-size:13px;font-weight:700;color:#ffb0b0;text-shadow:0 1px 4px rgba(0,0,0,.8);text-align:center;padding:0 16px;}
+.scan-cancel{position:relative;margin-top:18px;height:46px;padding:0 28px;border-radius:14px;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:15px;font-weight:800;}
+/* short viewports (landscape phones): compact the keypad so it always fits */
+@media (max-height:560px){
+  .pair-title{font-size:18px;margin-bottom:4px;}
+  .pair-hint{font-size:12px;margin-bottom:10px;}
+  .pair-cell{height:42px;max-width:40px;font-size:20px;}
+  .pair-keys{gap:6px;margin-bottom:10px;}
+  .pair-key{height:42px;font-size:17px;}
+  .pair-btn{height:46px;}
+  .pair-note{margin-top:8px;}
+}
+/* landscape phones are wide but short: split the card into two columns —
+   code + prompt on the left, keypad on the right — so it fits without scrolling */
+@media (orientation:landscape) and (max-height:600px){
+  .pair-card{max-width:660px;display:grid;grid-template-columns:1.15fr 1fr;column-gap:30px;align-items:center;text-align:left;}
+  .pair-title,.pair-hint,.pair-cells,.pair-err,.pair-btn,.pair-note{grid-column:1;}
+  .pair-cells{justify-content:flex-start;gap:6px;}
+  .pair-hint{margin-bottom:12px;}
+  .pair-keys{grid-column:2;grid-row:1 / span 6;align-self:center;margin:0;}
+  .pair-note{margin-top:10px;}
+}
+
+/* ---- per-app mic-hotkey binding editor (reuses .pair overlay) ---- */
+.bind-input{width:100%;height:52px;border-radius:14px;background:var(--card);border:1px solid #23262e;
+  color:var(--ink);font-size:18px;font-weight:700;text-align:center;letter-spacing:1px;margin-bottom:10px;
+  padding:0 12px;box-sizing:border-box;}
+.bind-input:focus{outline:none;border-color:#ff7ab8;background:rgba(255,122,184,.08);}
+.bind-actions{display:flex;gap:8px;margin-top:6px;}
+.bind-btn{flex:1;height:50px;border-radius:14px;font-size:15px;font-weight:800;background:#ff7ab8;color:#0c0d10;}
+.bind-btn--ghost{background:var(--card2);border:1px solid var(--line2);color:var(--ink);}
+
+/* ---- OLED screensaver: black canvas + one dim wandering clock ---- */
+.saver{position:fixed;inset:0;z-index:80;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.saver.hidden{display:none;}
+.saver-drift{display:flex;flex-direction:column;align-items:center;gap:8px;animation:saverWander 48s ease-in-out infinite;will-change:transform;}
+.saver-clock{font-size:34px;font-weight:800;color:#3a3d45;letter-spacing:2px;}
+.saver-hint{font-size:10px;font-weight:700;letter-spacing:2px;color:#24262c;text-transform:uppercase;}
+@keyframes saverWander{
+  0%{transform:translate(-30vw,-28vh);} 20%{transform:translate(28vw,-12vh);}
+  40%{transform:translate(-20vw,24vh);} 60%{transform:translate(26vw,28vh);}
+  80%{transform:translate(-28vw,4vh);} 100%{transform:translate(-30vw,-28vh);}
+}
+
+/* ---- media page (now playing): full-page sheet, opens on swipe-up from bottom ---- */
+/* Bottom-centre handle in both orientations (swipe up / tap to open). */
+.media-handle{position:fixed;z-index:65;display:flex;align-items:center;justify-content:center;
+  background:var(--card2);border:1px solid var(--line2);color:var(--sub);opacity:.85;
+  bottom:0;left:50%;transform:translateX(-50%);width:104px;height:22px;border-bottom:none;border-radius:12px 12px 0 0;}
+.media-handle-ico{font-size:13px;line-height:1;}
+.media{position:fixed;inset:0;z-index:70;pointer-events:none;}
+.media.open{pointer-events:auto;}
+/* full page in both orientations, sliding up from the bottom */
+.media-sheet{position:absolute;inset:0;display:flex;flex-direction:column;
+  background:#0b0c10;transform:translateY(100%);transition:transform .34s cubic-bezier(.2,.8,.2,1);}
+.media.open .media-sheet{transform:translateY(0);}
+/* top bar: connection (left) · up-to-mixer chevron (centred, per the sketch) · title (right) */
+.media-topbar{position:relative;flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 11px calc(16px + env(safe-area-inset-left));
+  border-bottom:1px solid var(--line);}
+.media-tb-side{flex:1;min-width:0;display:flex;align-items:center;gap:8px;}
+.media-tb-right{justify-content:flex-end;}
+.media-up{position:absolute;left:50%;top:6px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:0;background:transparent;border:none;color:var(--ink2);padding:2px 12px 4px;cursor:pointer;}
+.media-up-label{font-size:10px;font-weight:800;letter-spacing:.6px;color:var(--sub);margin-top:-2px;}
+.media-title{font-size:12px;font-weight:800;color:var(--sub);letter-spacing:1px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.media-tb-side .conn-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* horizontal scroll-snap row of source cards */
+.media-list{flex:1;min-height:0;display:flex;gap:14px;overflow-x:auto;overflow-y:hidden;
+  padding:16px calc(16px + env(safe-area-inset-right)) 16px calc(16px + env(safe-area-inset-left));
+  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;
+  justify-content:safe center;}   /* 1-2 cards sit centred; many stay left-aligned + scrollable */
+.media-list.empty{align-items:center;justify-content:center;overflow:hidden;}
+.mcard{scroll-snap-align:start;flex:0 0 auto;width:min(300px,74vw);align-self:stretch;max-height:100%;
+  display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px;border-radius:20px;
+  background:var(--card);border:1px solid var(--line2);box-sizing:border-box;}
+.mcard.playing{border-color:rgba(86,194,255,.5);background:rgba(86,194,255,.05);}
+.mcard-app{align-self:flex-start;font-size:16px;font-weight:800;color:var(--ink);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mcard-art{flex:1 1 auto;min-height:64px;align-self:center;max-width:100%;aspect-ratio:1/1;border-radius:14px;background:#0e0f13 center/cover no-repeat;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.mcard-meta{width:100%;text-align:center;}
+.mcard-title{font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mcard-sub{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.mcard-transport{display:flex;align-items:center;gap:14px;}
+.mbtn{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;border:none;flex:none;}
+.mbtn.play{background:#e8eaef;width:58px;height:58px;}
+.mbtn.hint{opacity:.5;}   /* source reports no next/prev, but tap still tries */
+/* scroll-status dots */
+.media-dots{flex:none;display:flex;justify-content:center;align-items:center;gap:7px;min-height:22px;padding-bottom:calc(6px + env(safe-area-inset-bottom));}
+.media-dot{width:7px;height:7px;border-radius:50%;background:var(--line3);transition:background .15s,transform .15s;}
+.media-dot.on{background:var(--ink2);transform:scale(1.25);}
+.media-empty{text-align:center;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:8px;}
+.media-empty-t{font-size:16px;font-weight:800;color:var(--ink2);}
+.media-empty-s{font-size:13px;color:var(--muted);max-width:280px;}
+
+@keyframes scpulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ---- portrait fallback: stack the mixer ---- */
+@media (orientation:portrait){
+  .page-mixer{flex-direction:column;}
+  .zone-system{width:auto;flex:none;flex-direction:row;border-right:none;border-bottom:1px solid var(--line);}
+  .zone-system .zone-label{display:none;}
+  .zone-apps{flex:none;}
+  .apps-grid{grid-auto-rows:minmax(72px,auto);}
+  .zone-dial{width:auto;flex:1;border-left:none;border-top:1px solid var(--line);flex-direction:column;align-items:center;padding:10px;}
+  .dial-controls{margin-bottom:4px;}
+  .mode-switch{flex-direction:row;align-self:center;}
+  .dial-host{align-self:auto;width:100%;flex:1;}
+  .dial-source{max-width:72px;}
+  /* Devices: stack INPUT over OUTPUT so each row gets full width (no name/meter
+     clipping on a narrow phone). Two side-by-side columns is a landscape luxury. */
+  .dev-cols{flex-direction:column;overflow-y:auto;}
+  .dev-col{overflow:visible;}
+  .tile-pct{font-size:22px;}
+}
+
+/* ---- tablet: more breathing room ---- */
+@media (min-width:900px) and (orientation:landscape){
+  .zone-apps{padding:16px 18px;gap:12px;}
+  .apps-grid{gap:14px;}
+  .tile{padding:14px 15px;border-radius:18px;}
+  .tile-badge{width:34px;height:34px;font-size:16px;}
+  .tile-name{font-size:16px;}
+  .tile-pct{font-size:34px;}
+  .chip{width:44px;height:44px;}
+  .conn-text,.tab{font-size:12px;}
+}

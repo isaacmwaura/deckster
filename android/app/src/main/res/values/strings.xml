@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Deckster</string>
+    <string name="connect_title">Connect to your PC</string>
+    <string name="connect_hint">http://192.168.1.20:8765/</string>
+    <string name="connect">Connect</string>
+    <string name="scan_qr">Scan QR</string>
+    <string name="waiting_usb">Looking for the PC over USB…</string>
+</resources>

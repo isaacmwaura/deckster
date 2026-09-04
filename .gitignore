@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Build artifacts
+build/*/
+dist/
+*.spec.bak
+
+# Bundled binaries (fetched at package time, not committed)
+bin/adb/
+bin/*.exe
+
+# Rendered planning artifacts (regenerated from the HTML)
+stream-control-plan.pdf
+
+# Raw design handoff extraction (kept locally). The OUTPUT is preserved in the repo
+# as DESIGN-SPEC.md + docs/design-reference/ (prototypes), excluding support.js.
+.design_ref/
+support.js
+ui_*.png
+
+# OS
+Thumbs.db
+Desktop.ini

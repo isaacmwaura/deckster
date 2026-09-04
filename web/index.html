@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#0a0b0d">
+  <title>Deckster</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="stylesheet" href="/static/style.css?v=19">
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Connection banner (shown for reconnecting/disconnected) -->
+    <div id="banner" class="banner hidden"></div>
+
+    <!-- Persistent top bar -->
+    <header class="topbar">
+      <span id="conn-dot" class="conn-dot"></span>
+      <span id="conn-text" class="conn-text">connecting…</span>
+      <span class="spacer"></span>
+      <div class="tabs">
+        <button id="tab-mixer" class="tab tab--on" data-page="0">Mixer</button>
+        <button id="tab-devices" class="tab" data-page="1">Devices&nbsp;›</button>
+      </div>
+    </header>
+
+    <!-- Swipe pager: Mixer | Devices -->
+    <main id="pager" class="pager noscroll">
+      <!-- PAGE 1: MIXER -->
+      <section class="page page-mixer">
+        <div class="zone zone-system">
+          <span class="zone-label">SYSTEM</span>
+          <button id="btn-mic" class="sys-btn" aria-label="Toggle microphone mute">
+            <span class="sys-ico" id="mic-ico"></span>
+            <span class="sys-cap" id="mic-cap">MUTE MIC</span>
+          </button>
+          <button id="btn-spk" class="sys-btn" aria-label="Toggle speaker mute">
+            <span class="sys-ico" id="spk-ico"></span>
+            <span class="sys-cap" id="spk-cap">70%</span>
+          </button>
+        </div>
+
+        <div class="zone zone-apps">
+          <span class="zone-label">APPS</span>
+          <div id="apps-grid" class="apps-grid"></div>
+        </div>
+
+        <div class="zone zone-dial">
+          <div class="dial-controls">
+            <div class="dial-appid">
+              <img id="dial-app-icon" class="dial-app-icon" alt="" hidden>
+              <span id="dial-app-badge" class="dial-app-badge" hidden></span>
+              <span id="dial-source" class="dial-source">—</span>
+            </div>
+            <div class="mode-switch" id="mode-switch">
+              <button class="mode-btn mode-btn--on" data-mode="app">App</button>
+              <button class="mode-btn" data-mode="system">Sys</button>
+              <button class="mode-btn" data-mode="mic">Mic</button>
+            </div>
+          </div>
+          <div id="dial-host" class="dial-host"></div>
+        </div>
+      </section>
+
+      <!-- PAGE 2: DEVICES -->
+      <section class="page page-devices">
+        <div class="dev-head">
+          <button id="dev-back" class="dev-back" aria-label="Back to mixer">‹</button>
+          <span class="dev-title">Devices</span>
+          <span class="spacer"></span>
+          <span class="dev-hint">Pick input &amp; output</span>
+        </div>
+        <div class="dev-cols">
+          <div class="dev-col">
+            <div class="dev-col-head dev-col-head--in">
+              <span class="dev-col-ico" id="in-ico"></span><span>INPUT</span>
+            </div>
+            <div id="inputs" class="dev-list"></div>
+          </div>
+          <div class="dev-col">
+            <div class="dev-col-head dev-col-head--out">
+              <span class="dev-col-ico" id="out-ico"></span><span>OUTPUT</span>
+            </div>
+            <div id="outputs" class="dev-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Error toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Pairing overlay -->
+    <div id="pair" class="pair hidden">
+      <div class="pair-card">
+        <h2 class="pair-title">Pair this phone</h2>
+        <p class="pair-hint">Scan the QR code on your PC — or enter the 6-digit code below.</p>
+        <button id="pair-scan" class="pair-scan">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path><rect x="8.5" y="8.5" width="7" height="7" rx="1.5" fill="currentColor"></rect></svg>
+          <span>Scan QR code</span>
+        </button>
+        <div id="pair-cells" class="pair-cells"></div>
+        <p id="pair-err" class="pair-err"></p>
+        <div id="pair-keys" class="pair-keys"></div>
+        <button id="pair-go" class="pair-btn" disabled>Pair phone</button>
+        <p class="pair-note">Point the phone camera at the QR on your PC, or type the code.</p>
+      </div>
+    </div>
+
+    <!-- Camera QR scanner (opens over the pairing screen) -->
+    <div id="scanner" class="scanner hidden">
+      <video id="scan-video" autoplay muted playsinline></video>
+      <div class="scan-frame"></div>
+      <div class="scan-hint">Point at the QR code on your PC</div>
+      <p id="scan-err" class="scan-err"></p>
+      <button id="scan-cancel" class="scan-cancel" aria-label="Cancel scanning">Cancel</button>
+    </div>
+
+    <!-- Per-app mic-hotkey binding editor -->
+    <div id="binding" class="pair hidden">
+      <div class="pair-card">
+        <h2 id="bind-title" class="pair-title">Mic hotkey</h2>
+        <p class="pair-hint">Windows can’t mute one app’s mic, so this fires the app’s own
+          mute / push-to-talk hotkey. Enter the same combo you set inside the app.</p>
+        <input id="bind-input" class="bind-input" type="text" inputmode="text"
+               autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="e.g. ctrl+shift+m">
+        <p id="bind-err" class="pair-err"></p>
+        <div class="bind-actions">
+          <button id="bind-clear" class="bind-btn bind-btn--ghost">Clear</button>
+          <button id="bind-cancel" class="bind-btn bind-btn--ghost">Cancel</button>
+          <button id="bind-save" class="bind-btn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edge handle to reveal the media sheet (swipe left / down also works) -->
+    <button id="media-handle" class="media-handle" aria-label="Open media controls">
+      <span class="media-handle-ico">♪</span>
+    </button>
+
+    <!-- Media page: full-page now-playing, one menu in the swipe-between UX -->
+    <div id="media" class="media">
+      <div class="media-sheet">
+        <header class="media-topbar">
+          <div class="media-tb-side">
+            <span id="media-conn-dot" class="conn-dot"></span>
+            <span id="media-conn-text" class="conn-text">connecting…</span>
+          </div>
+          <button id="media-up" class="media-up" aria-label="Back to mixer">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 15 L12 9 L18 15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+            <span class="media-up-label">Mixer</span>
+          </button>
+          <div class="media-tb-side media-tb-right">
+            <span class="media-title">Now Playing</span>
+          </div>
+        </header>
+        <div id="media-list" class="media-list"></div>
+        <div id="media-dots" class="media-dots"></div>
+      </div>
+    </div>
+
+    <!-- OLED screensaver: near-black, a single dim wandering clock; tap to wake -->
+    <div id="saver" class="saver hidden">
+      <div class="saver-drift">
+        <div id="saver-clock" class="saver-clock">--:--</div>
+        <div class="saver-hint">tap to control</div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/app.js?v=19"></script>
+</body>
+</html>

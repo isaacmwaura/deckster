@@ -1,0 +1,14 @@
+# Runtime dependencies (Windows).
+aiohttp>=3.9
+pycaw>=20240210
+comtypes>=1.2
+pystray>=0.19
+Pillow>=10.0
+qrcode>=7.4
+cryptography>=42.0   # self-signed TLS (agent HTTPS; the Android app pins the cert)
+zeroconf>=0.130      # mDNS advertising so the Android app auto-discovers the PC on Wi-Fi
+winsdk>=1.0.0b10   # SMTC now-playing (media page); optional at runtime, degrades gracefully
+
+# Dev / build (not required to run the agent):
+#   pytest pytest-asyncio pyinstaller
+#   playwright   (only for the docs render + headless UI checks)

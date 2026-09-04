@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deckster — Settings</title>
+<style>
+  :root{
+    --bg:#0b0e14; --card:#14161b; --card2:#191c22; --line:#242833; --line2:#2f3441;
+    --ink:#f2f3f5; --ink2:#c2c6cf; --sub:#9a9ea8; --muted:#6b6f78;
+    --green:#4ddb7f; --green-txt:#7fe0a3; --blue:#56c2ff; --amber:#ffb84d; --red:#e05a5a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.45;padding:28px 18px;}
+  .wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:16px;}
+  .head{display:flex;align-items:baseline;gap:10px;margin-bottom:2px;}
+  .head h1{font-size:20px;font-weight:800;letter-spacing:.2px;}
+  .head .ver{font-size:12px;font-weight:700;color:var(--muted);}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;}
+  .card h2{font-size:11px;font-weight:800;letter-spacing:1.4px;color:var(--sub);text-transform:uppercase;margin-bottom:12px;}
+  .row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .row + .row{margin-top:12px;}
+  .grow{flex:1;min-width:0;}
+  .sub{font-size:13px;color:var(--sub);}
+  .mono{font-family:ui-monospace,Consolas,'Courier New',monospace;}
+  a{color:var(--blue);}
+  /* segmented mode toggle */
+  .seg{display:inline-flex;background:var(--card2);border:1px solid var(--line2);border-radius:12px;padding:3px;gap:3px;}
+  .seg button{font:inherit;color:var(--sub);background:transparent;border:none;cursor:pointer;
+    padding:9px 16px;border-radius:9px;font-weight:800;font-size:13px;white-space:nowrap;}
+  .seg button.on{background:#2a2f3a;color:var(--ink);}
+  .seg button.on.usb{background:rgba(77,219,127,.16);color:var(--green-txt);}
+  .seg button.on.wifi{background:rgba(255,184,77,.16);color:#ffcf88;}
+  .btn{font:inherit;font-weight:800;font-size:13px;cursor:pointer;border-radius:11px;padding:9px 15px;
+    background:var(--card2);border:1px solid var(--line2);color:var(--ink);}
+  .btn:hover{border-color:#3a4150;}
+  .btn.primary{background:var(--blue);border-color:var(--blue);color:#08121a;}
+  .btn.danger{background:transparent;border-color:rgba(224,90,90,.5);color:#f0a2a2;}
+  .btn.danger:hover{background:rgba(224,90,90,.12);}
+  .code{font-size:30px;font-weight:800;letter-spacing:10px;color:var(--ink);}
+  .pill{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.4px;padding:3px 9px;border-radius:999px;}
+  .pill.ok{background:rgba(77,219,127,.14);color:var(--green-txt);}
+  .pill.warn{background:rgba(255,184,77,.14);color:#ffcf88;}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:10px;}
+  .hint code{background:#0e1117;border:1px solid var(--line2);border-radius:6px;padding:1px 6px;color:var(--ink2);font-size:12px;}
+  .dev{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line);}
+  .dev:first-of-type{border-top:none;}
+  .dev .nm{font-weight:700;color:var(--ink2);}
+  .dev .dt{font-size:12px;color:var(--muted);}
+  .empty{color:var(--muted);font-size:13px;padding:6px 0;}
+  /* switch */
+  .sw{position:relative;width:46px;height:26px;flex:none;cursor:pointer;}
+  .sw input{opacity:0;width:0;height:0;}
+  .sw .track{position:absolute;inset:0;background:#2a2f3a;border:1px solid var(--line2);border-radius:999px;transition:.15s;}
+  .sw .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#c2c6cf;transition:.15s;}
+  .sw input:checked + .track{background:rgba(77,219,127,.25);border-color:rgba(77,219,127,.5);}
+  .sw input:checked + .track + .knob{transform:translateX(20px);background:var(--green);}
+  .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);
+    background:#17151a;border:1px solid #3a2a2c;border-radius:12px;padding:10px 16px;font-size:13px;font-weight:700;
+    opacity:0;transition:.2s;pointer-events:none;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  .toast.ok{border-color:rgba(77,219,127,.4);color:var(--green-txt);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><h1>Deckster</h1><span class="ver" id="ver"></span></div>
+
+  <!-- Connection -->
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="row">
+      <div class="seg" id="seg">
+        <button data-mode="loopback" class="usb">USB · secure</button>
+        <button data-mode="lan" class="wifi">Wi-Fi</button>
+      </div>
+      <span class="pill" id="mode-pill"></span>
+    </div>
+    <div class="row">
+      <div class="grow">
+        <div class="sub">Open this on the phone</div>
+        <div class="mono" id="connect-url" style="font-size:15px;font-weight:700;color:var(--ink);word-break:break-all;"></div>
+        <div class="sub" id="connect-note" style="margin-top:2px;"></div>
+      </div>
+      <button class="btn" id="open-qr">Pairing QR ↗</button>
+    </div>
+    <div class="row">
+      <div class="grow">
+        <div style="font-weight:700;color:var(--ink2);">Secure connection (TLS)</div>
+        <div class="sub">Encrypts the link. The Android app pins this certificate — no warning; a browser shows a one-time "not private" warning you accept once.</div>
+        <div class="mono" id="fp" style="font-size:11px;color:var(--muted);margin-top:5px;word-break:break-all;"></div>
+      </div>
+      <label class="sw"><input type="checkbox" id="secure"><span class="track"></span><span class="knob"></span></label>
+    </div>
+    <div class="hint" id="fw-hint" hidden>
+      Wi-Fi needs an inbound firewall rule once. In an <b>elevated</b> PowerShell:
+      <br><code id="fw-cmd"></code>
+    </div>
+  </div>
+
+  <!-- Pairing -->
+  <div class="card">
+    <h2>Pairing</h2>
+    <div class="row">
+      <div class="grow"><div class="code" id="pair-code">— — — — — —</div>
+        <div class="sub" style="margin-top:4px;">Enter this on the phone, or scan the QR.</div></div>
+      <button class="btn" id="refresh-code">New code</button>
+    </div>
+  </div>
+
+  <!-- Paired devices -->
+  <div class="card">
+    <h2>Paired devices</h2>
+    <div id="devices"></div>
+    <div class="row" id="revoke-all-row" style="margin-top:12px;" hidden>
+      <span class="grow"></span>
+      <button class="btn danger" id="revoke-all">Revoke all</button>
+    </div>
+  </div>
+
+  <!-- Startup -->
+  <div class="card">
+    <h2>Startup</h2>
+    <div class="row">
+      <div class="grow"><div style="font-weight:700;color:var(--ink2);">Start with Windows</div>
+        <div class="sub">Launch Deckster automatically at login (current user, no admin).</div></div>
+      <label class="sw"><input type="checkbox" id="autostart"><span class="track"></span><span class="knob"></span></label>
+    </div>
+  </div>
+
+  <div class="sub" style="text-align:center;color:var(--muted);font-size:12px;padding:4px 0 8px;">
+    USB (loopback) keeps the agent off the network — the secure default. Wi-Fi is token-gated; TLS is planned.
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  function toast(msg, ok){var t=$("toast");t.textContent=msg;t.className="toast show"+(ok?" ok":"");
+    setTimeout(function(){t.className="toast"+(ok?" ok":"");},1800);}
+  function api(path, body){
+    return fetch(path,{method:body?"POST":"GET",headers:body?{"Content-Type":"application/json"}:{},
+      body:body?JSON.stringify(body):undefined}).then(function(r){return r.json();});
+  }
+  function fmtDate(sec){ if(!sec) return ""; try{ return new Date(sec*1000).toLocaleDateString(undefined,
+    {year:"numeric",month:"short",day:"numeric"}); }catch(e){ return ""; } }
+
+  var last = {};
+  function render(s){
+    last = s;
+    $("ver").textContent = "v"+(s.version||"");
+    // mode segmented control
+    var isLan = s.mode==="lan";
+    var btns=$("seg").querySelectorAll("button");
+    btns.forEach(function(b){
+      var on=b.getAttribute("data-mode")===s.mode;
+      b.className=(b.getAttribute("data-mode")==="loopback"?"usb":"wifi")+(on?" on":"");
+    });
+    var pill=$("mode-pill");
+    pill.textContent = isLan ? "Wi-Fi · on your LAN" : "USB · off-network";
+    pill.className = "pill "+(isLan?"warn":"ok");
+    $("connect-url").textContent = s.connectUrl||"";
+    $("connect-note").textContent = s.connectNote||"";
+    // firewall hint only relevant on Wi-Fi
+    var fw=$("fw-hint"); fw.hidden=!isLan;
+    if(isLan){ $("fw-cmd").textContent =
+      'New-NetFirewallRule -DisplayName "Deckster (LAN)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort '
+      +(s.port)+'-'+((s.port||8765)+20)+' -Profile Private,Public'; }
+    // pairing code (spaced)
+    $("pair-code").textContent = String(s.pairCode||"").split("").join(" ") || "— — — — — —";
+    // devices
+    var host=$("devices"); host.innerHTML="";
+    var list=s.devices||[];
+    if(!list.length){ host.innerHTML='<div class="empty">No devices paired yet.</div>'; }
+    else list.forEach(function(d){
+      var row=document.createElement("div"); row.className="dev";
+      var info=document.createElement("div"); info.className="grow";
+      info.innerHTML='<div class="nm">'+(d.name||"Device")+'</div><div class="dt">paired '+fmtDate(d.paired_at)+'</div>';
+      var btn=document.createElement("button"); btn.className="btn danger"; btn.textContent="Revoke";
+      btn.onclick=function(){ api("/admin/api/device/revoke",{id:d.id}).then(function(){toast("Device revoked");load();}); };
+      row.appendChild(info); row.appendChild(btn); host.appendChild(row);
+    });
+    $("revoke-all-row").hidden = list.length<2;
+    // secure / TLS
+    $("secure").checked = !!s.secure;
+    $("fp").textContent = s.fingerprint ? ("cert  "+s.fingerprint) : "";
+    // autostart
+    $("autostart").checked = !!s.autostart;
+  }
+
+  function load(){ return api("/admin/api/state").then(render).catch(function(){toast("Can't reach the agent");}); }
+
+  // events
+  $("seg").addEventListener("click", function(e){
+    var b=e.target.closest("button[data-mode]"); if(!b) return;
+    var mode=b.getAttribute("data-mode");
+    api("/admin/api/mode",{mode:mode}).then(function(r){ toast(r.mode==="lan"?"Wi-Fi mode on":"USB mode on",true); load(); });
+  });
+  $("open-qr").onclick=function(){ window.open("/qr","_blank"); };
+  $("refresh-code").onclick=function(){ api("/admin/api/pair/refresh",{}).then(function(){toast("New code generated",true);load();}); };
+  $("revoke-all").onclick=function(){ api("/admin/api/device/revoke",{all:true}).then(function(){toast("All devices revoked");load();}); };
+  $("autostart").onchange=function(){ var on=$("autostart").checked;
+    api("/admin/api/autostart",{enabled:on}).then(function(){toast(on?"Autostart on":"Autostart off",true);load();}); };
+  $("secure").onchange=function(){ var on=$("secure").checked;
+    api("/admin/api/secure",{enabled:on}).then(function(r){
+      toast(on?"TLS on — reopening securely…":"TLS off — reopening…",true);
+      // the agent rebinds to the new scheme; reopen this page there (accept the
+      // one-time certificate warning when switching to HTTPS).
+      var scheme=r.secure?"https":"http";
+      setTimeout(function(){ location.href=scheme+"://localhost:"+(last.port||8765)+"/admin"; },1000);
+    }); };
+
+  load();
+  setInterval(load, 15000);   // keep devices/code fresh if changed elsewhere
+})();
+</script>
+</body>
+</html>
