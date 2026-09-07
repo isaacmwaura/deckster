@@ -46,6 +46,7 @@ class Admin:
             "secure": bool(getattr(self._rt, "secure", False)),
             "fingerprint": self._fingerprint,
             "qrPath": str(getattr(self._rt, "qr_path", "") or ""),
+            "firewallNeeded": _firewall_needed(self._rt.mode),
         }
 
     def set_mode(self, mode: str) -> str:
@@ -70,7 +71,20 @@ class Admin:
         from . import autostart
         return autostart.enable() if enabled else autostart.disable()
 
+    def allow_firewall(self) -> bool:
+        """Add the inbound firewall rule for the Wi-Fi path (prompts for elevation)."""
+        from . import firewall
+        return firewall.add_rule_elevated()
+
 
 def _autostart_is_enabled() -> bool:
     from . import autostart
     return autostart.is_enabled()
+
+
+def _firewall_needed(mode: str) -> bool:
+    from . import firewall
+    try:
+        return firewall.needs_rule(mode)
+    except Exception:  # noqa: BLE001 - a firewall check should never blank the page
+        return False

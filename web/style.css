@@ -126,6 +126,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .dial-app-icon{width:34px;height:34px;border-radius:9px;object-fit:contain;flex:none;}
 .dial-app-badge{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
   font-size:15px;font-weight:800;color:#0c0d10;flex:none;}
+/* A generic app has no real icon: a neutral, muted mark, clearly not the gear. */
+.dial-app-badge.generic{background:var(--line3);color:var(--ink2);}
+/* Load-bearing: `display:flex` above beats the UA [hidden] rule, so make the
+   hidden element truly gone — otherwise a stale badge lingers under the icon. */
+.dial-app-icon[hidden],.dial-app-badge[hidden]{display:none!important;}
 .dial-source{font-size:11px;font-weight:800;color:var(--ink2);text-align:center;line-height:1.1;
   max-width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .mode-switch{flex:none;align-self:center;display:flex;flex-direction:column;gap:3px;
@@ -283,7 +288,11 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
   background:var(--card);border:1px solid var(--line2);box-sizing:border-box;}
 .mcard.playing{border-color:rgba(86,194,255,.5);background:rgba(86,194,255,.05);}
 .mcard-app{align-self:flex-start;font-size:16px;font-weight:800;color:var(--ink);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.mcard-art{flex:1 1 auto;min-height:64px;align-self:center;max-width:100%;aspect-ratio:1/1;border-radius:14px;background:#0e0f13 center/cover no-repeat;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+/* Art area fills the card's spare height; the image inside keeps its TRUE aspect
+   ratio (contain), so a 16:9 / 4:3 / square thumbnail shows as-is, never cropped. */
+.mcard-art{flex:1 1 auto;min-height:64px;width:100%;align-self:center;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.mcard-img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:14px;background:#0e0f13;display:block;}
+.mcard-art.placeholder{flex:0 1 auto;aspect-ratio:1/1;max-width:100%;border-radius:14px;background:#0e0f13;}
 .mcard-meta{width:100%;text-align:center;}
 .mcard-title{font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .mcard-sub{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}

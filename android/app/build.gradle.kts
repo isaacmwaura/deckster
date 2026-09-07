@@ -11,8 +11,8 @@ android {
         applicationId = "com.streamcontrol.shell"
         minSdk = 24                 // Android 7.0 — reaches older phones (WebView updates via Play)
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildTypes {

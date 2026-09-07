@@ -46,6 +46,9 @@
   }
   // Short, fixed-length label for the compact name under the dial's app icon.
   function shortName(s) { s = s || ""; return s.length > 9 ? s.slice(0, 9) + "…" : s; }
+  // Generic placeholder for an app with no real exe icon — a neutral app-window
+  // mark. Deliberately unlike the system gear so it's never mistaken for System.
+  var APP_GLYPH = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"></rect><path d="M3.5 9 H20.5"></path><circle cx="6.4" cy="6.75" r="0.5" fill="currentColor" stroke="none"></circle><circle cx="8.7" cy="6.75" r="0.5" fill="currentColor" stroke="none"></circle></svg>';
   // Paint a badge node with the app's real exe icon when we have one, else the
   // colored letter fallback. `item` carries {iconKey, accent, badge}.
   function paintBadge(node, item) {
@@ -140,6 +143,22 @@
   Dial.prototype.angleAt = function (x, y) { var g = this.geom(), fx = x - g.px, fy = y - g.py; return this.orientation === "left" ? Math.atan2(-fy, -fx) : Math.atan2(fx, -fy); };
   Dial.prototype.fracAt = function (x, y) { var g = this.geom(); return Math.hypot(x - g.px, y - g.py) / g.rr; };
   Dial.prototype.valFromLinear = function (y) { var c = this.cfg(), g = this.geom(), yb = g.rect.top + c.linBot * g.sy, yt = g.rect.top + c.linTop * g.sy; return (yb - y) / (yb - yt) * 100; };
+  // Absolute position -> value for the arc dial: map the finger straight onto the
+  // 0%..100% axis (vertical in landscape, horizontal in portrait), exactly like a
+  // plain volume slider. No relative deltas, no velocity, no dead zone near 50%.
+  Dial.prototype.valFromAxis = function (x, y) {
+    var g = this.geom(), p0 = this.pos(0, this.R_FILL), p100 = this.pos(100, this.R_FILL);
+    if (this.orientation === "left") {
+      var y0 = g.rect.top + p0.y * g.sy, y1 = g.rect.top + p100.y * g.sy;
+      return (y - y0) / ((y1 - y0) || 1) * 100;
+    }
+    var x0 = g.rect.left + p0.x * g.sx, x1 = g.rect.left + p100.x * g.sx;
+    return (x - x0) / ((x1 - x0) || 1) * 100;
+  };
+  // One entry point for both modes: wherever the finger is, that's the value.
+  Dial.prototype.valFromPointer = function (x, y) {
+    return this.linear() ? this.valFromLinear(y) : this.valFromAxis(x, y);
+  };
   Dial.prototype.commit = function (nv) {
     var prev = this.val; nv = clamp(nv, 0, 100);
     var pb = Math.round(prev / 10), nb = Math.round(nv / 10);
@@ -171,8 +190,7 @@
       if (e.cancelable) e.preventDefault();   // claim the gesture so touchmove always fires
       var t = (e.touches && e.touches[0]) || e;
       self.dragging = true;
-      if (self.linear()) self.commit(self.valFromLinear(t.clientY));
-      else { self._px = t.clientX; self._py = t.clientY; }   // finger baseline for tangential drag
+      self.commit(self.valFromPointer(t.clientX, t.clientY));  // jump to finger, like a slider
       self.render();
       var move = function (ev) { if (ev.cancelable) ev.preventDefault(); var p = (ev.touches && ev.touches[0]) || ev; self._move(p.clientX, p.clientY); };
       var up = function () {
@@ -186,23 +204,10 @@
     this.svg.addEventListener("mousedown", down);
     this.svg.addEventListener("touchstart", down, { passive: false });
   };
-  Dial.prototype._move = function (x, y) {
-    if (this.linear()) { this.commit(this.valFromLinear(y)); return; }
-    var g = this.geom();
-    if (this._px == null) { this._px = x; this._py = y; return; }
-    var mx = x - this._px, my = y - this._py; this._px = x; this._py = y;
-    // Track the finger along the dial's straight 0%->100% CHORD: vertical in
-    // landscape ('left', 0 at top / 100 at bottom), horizontal in portrait ('up').
-    // The previous model projected onto the arc *tangent*, which cancelled to zero
-    // for a cross-axis swipe near 50% (dial showed "GAIN" but nothing moved) and
-    // lost ~half its sensitivity at the extremes. A chord drag has constant
-    // sensitivity, no dead zone, and no sign flip. Following the curve still works
-    // because the along-axis component of that motion still drives it.
-    var chordPx = 2 * this.R_FILL * Math.sin(this.HALF * this.D2R) *
-                  (this.orientation === "left" ? g.sy : g.sx);   // 0->100 span, screen px
-    var travel = (this.orientation === "left") ? my : mx;         // down / right = louder
-    this.commit(this.val + travel / (chordPx || 1) * 100 * 1.1);  // 1.1 = slight feel gain
-  };
+  // Absolute slider: the value follows the finger's position directly. This
+  // replaces the earlier relative "chord"/tangent drag, which was sensitive to
+  // swipe speed and unreliable near the 50% mark. Behaves like any OS volume slider.
+  Dial.prototype._move = function (x, y) { this.commit(this.valFromPointer(x, y)); };
   Dial.prototype.render = function () {
     var c = this.cfg(), lin = this.linear(), muted = this.muted, dragging = this.dragging;
     var disc = this.target.state === "disconnected";
@@ -289,9 +294,33 @@
   function stripPairParam() { if (window.history && history.replaceState) { try { history.replaceState(null, "", location.pathname); } catch (e) {} } }
 
   // ---- WebSocket lifecycle (token pairing + reconnect) ----
-  function deviceId() { var id = localStorage.getItem("sc_device_id"); if (!id) { id = "dev-" + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("sc_device_id", id); } return id; }
-  function getToken() { return localStorage.getItem("sc_token") || ""; }
-  function setToken(t) { localStorage.setItem("sc_token", t); }
+  // Native (Android app) credential bridge. localStorage is per-origin, so a token
+  // saved over USB (localhost) is invisible over Wi-Fi (LAN IP) and vice-versa —
+  // which is why the app used to demand a fresh QR scan on every reconnect. When
+  // running inside the app, the token + device id live in the app's own storage
+  // (AndroidBridge), so they survive across origins, restarts, and network changes
+  // and the phone re-authenticates silently — no re-scan. Plain browsers just use
+  // localStorage as before. The server authenticates by token alone (find_by_token),
+  // so the same token works on any origin.
+  function nativeBridge() { try { return window.AndroidBridge || null; } catch (e) { return null; } }
+  function deviceId() {
+    var b = nativeBridge();
+    if (b && b.getDeviceId) { try { var nid = b.getDeviceId(); if (nid) return nid; } catch (e) {} }
+    var id = localStorage.getItem("sc_device_id");
+    if (!id) { id = "dev-" + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem("sc_device_id", id); }
+    if (b && b.setDeviceId) { try { b.setDeviceId(id); } catch (e) {} }
+    return id;
+  }
+  function getToken() {
+    var t = localStorage.getItem("sc_token") || "";
+    if (!t) { var b = nativeBridge(); if (b && b.getToken) { try { t = b.getToken() || ""; } catch (e) {} if (t) { try { localStorage.setItem("sc_token", t); } catch (e2) {} } } }
+    return t;
+  }
+  function setToken(t) {
+    try { localStorage.setItem("sc_token", t); } catch (e) {}
+    var b = nativeBridge();
+    if (b && b.saveToken) { try { b.saveToken(t); } catch (e) {} }
+  }
   function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
   function wsUrl() { return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/ws"; }
 
@@ -372,11 +401,11 @@
 
   // ---- dial target derivation ----
   function dialTarget() {
-    if (model.dialMode === "system") return { source: "Speakers", accent: "#4ddb7f", value: Math.round(model.system.spkLevel * 100), muted: model.system.spkMuted, mode: "jog", id: "sys", badge: "⚙" };
-    if (model.dialMode === "mic") return { source: "Mic Sens", accent: "#ff7ab8", value: Math.round(model.system.micLevel * 100), muted: model.system.micMuted, mode: "linear", id: "mic", badge: "M" };
+    if (model.dialMode === "system") return { source: "Speakers", accent: "#4ddb7f", value: Math.round(model.system.spkLevel * 100), muted: model.system.spkMuted, mode: "jog", id: "sys", badge: "⚙", kind: "system" };
+    if (model.dialMode === "mic") return { source: "Mic Sens", accent: "#ff7ab8", value: Math.round(model.system.micLevel * 100), muted: model.system.micMuted, mode: "linear", id: "mic", badge: "M", kind: "mic" };
     var a = findApp(model.selectedId) || model.apps[0];
-    if (!a) return { source: "—", accent: "#4ddb7f", value: 0, muted: false, mode: "jog", id: "none", badge: "?" };
-    return { source: a.name, accent: a.accent, value: a.level, muted: a.muted, mode: "jog", id: "app-" + a.id, badge: a.badge, iconKey: a.iconKey };
+    if (!a) return { source: "—", accent: "#4ddb7f", value: 0, muted: false, mode: "jog", id: "none", kind: "app" };
+    return { source: a.name, accent: a.accent, value: a.level, muted: a.muted, mode: "jog", id: "app-" + a.id, iconKey: a.iconKey, kind: "app" };
   }
   var _lastTargetId = null;
   function syncDialFromModel() {
@@ -424,13 +453,22 @@
     var t = dialTarget();
     var img = $("dial-app-icon"), badge = $("dial-app-badge"), name = $("dial-source");
     if (img && badge) {   // guard: never let a partial/stale DOM throw and break renderAll
+      // Exactly ONE icon for the current target: the real app icon, or a generic
+      // placeholder for an app with no icon (distinct from the system gear), or the
+      // system/mic glyph. (Both elements are toggled cleanly — a CSS [hidden] rule
+      // makes the hidden one truly gone, so no stale badge lingers under the icon.)
       if (t.iconKey) {
         var url = "/icon/" + t.iconKey;
         if (img.getAttribute("src") !== url) img.setAttribute("src", url);
         img.hidden = false; badge.hidden = true;
-      } else {
+      } else if (t.kind === "app") {                 // app without an icon -> generic mark
         img.hidden = true; img.removeAttribute("src");
-        badge.hidden = false; badge.textContent = t.badge; badge.style.background = t.accent;
+        badge.hidden = false; badge.className = "dial-app-badge generic";
+        badge.style.background = ""; badge.innerHTML = APP_GLYPH;
+      } else {                                        // system / mic -> its own glyph
+        img.hidden = true; img.removeAttribute("src");
+        badge.hidden = false; badge.className = "dial-app-badge";
+        badge.style.background = t.accent; badge.textContent = t.badge || "";
       }
     }
     if (name) name.textContent = shortName(t.source);
@@ -744,8 +782,16 @@
       var card = el("div", "mcard" + (playing ? " playing" : ""));
       var app = el("div", "mcard-app"); app.textContent = s.app || "Media";
       var art = el("div", "mcard-art");
-      if (s.thumbKey) art.style.backgroundImage = 'url("/media_thumb/' + s.thumbKey + '")';
-      else art.innerHTML = noteSVG("#6b6f78", 46);
+      if (s.thumbKey) {
+        // Show the artwork at its TRUE aspect ratio (16:9, 4:3, square, …) — an
+        // <img> with object-fit:contain, never cropped/stretched to a square.
+        var im = el("img", "mcard-img"); im.alt = ""; im.decoding = "async";
+        im.src = "/media_thumb/" + s.thumbKey;
+        art.appendChild(im);
+      } else {
+        art.classList.add("placeholder");
+        art.innerHTML = noteSVG("#6b6f78", 46);
+      }
       var meta = el("div", "mcard-meta");
       var title = el("div", "mcard-title"); title.textContent = s.title || s.app || "Unknown";
       var sub = el("div", "mcard-sub"); sub.textContent = s.artist || "";

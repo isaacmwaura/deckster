@@ -36,6 +36,7 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     private val nsd = app.getSystemService(Context.NSD_SERVICE) as NsdManager
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private val found = LinkedHashMap<String, Pc>()
+    private val store = Store(app)
 
     init { probeUsbThenSearch() }
 
@@ -46,27 +47,43 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
 
     fun connect(pc: Pc) {
         stopDiscovery()
+        store.rememberPcFromUrl(pc.url, pc.fingerprint, pc.name)
         _state.value = UiState.Connected(pc.url, pc.fingerprint)
     }
 
     /** From a scanned QR or a typed address (no pinned fingerprint on this path yet). */
     fun connectUrl(url: String, fingerprint: String = "") {
         stopDiscovery()
-        _state.value = UiState.Connected(normalize(url), fingerprint)
+        val norm = normalize(url)
+        store.rememberPcFromUrl(norm, fingerprint, "PC")   // query (?pair=) is ignored
+        _state.value = UiState.Connected(norm, fingerprint)
     }
 
+    /**
+     * Seek a connection with no user action, in order of reliability:
+     *   1. wired USB (adb reverse -> localhost),
+     *   2. the PC we used last time, probed directly (plain-HTTP LAN),
+     *   3. mDNS discovery — auto-connecting a trusted PC (fingerprint match), else
+     *      listing what's found on the connect screen.
+     * Only when none of these land does the user see Scan-QR / manual entry. Once a
+     * PC has been set up, opening the app just reconnects — no re-scan.
+     */
     private fun probeUsbThenSearch() {
         _state.value = UiState.Searching
         viewModelScope.launch {
-            val usb = withContext(Dispatchers.IO) {
-                Net.reachable("http://localhost:$port/health")
+            if (withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health") }) {
+                _state.value = UiState.Connected("http://localhost:$port/", ""); return@launch
             }
-            if (usb) {
-                _state.value = UiState.Connected("http://localhost:$port/", "")
-            } else {
-                _state.value = UiState.NeedConnect(found.values.toList())
-                startDiscovery()
+            val last = store.lastPc()
+            if (last != null && last.url.startsWith("http://")) {   // https can't be probed w/o the pin
+                val health = last.url.trimEnd('/') + "/health"
+                if (withContext(Dispatchers.IO) { Net.reachable(health) }) {
+                    connect(last); return@launch
+                }
             }
+            found.clear()
+            _state.value = UiState.NeedConnect(found.values.toList())
+            startDiscovery()
         }
     }
 
@@ -104,6 +121,10 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
                 val fp = attrs["fp"]?.toString(Charsets.UTF_8) ?: ""
                 val scheme = if (secure) "https" else "http"
                 val pc = Pc(info.serviceName ?: "PC", "$scheme://$host:${info.port}/", fp)
+                // A trusted PC (its pinned fingerprint matches the one we remember)
+                // reappearing on the network -> reconnect automatically, no tap.
+                val knownFp = store.lastPcFingerprint()
+                if (knownFp.isNotEmpty() && fp == knownFp) { connect(pc); return }
                 found[pc.url] = pc
                 if (_state.value is UiState.NeedConnect || _state.value is UiState.Searching) {
                     _state.value = UiState.NeedConnect(found.values.toList())

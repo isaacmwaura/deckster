@@ -117,6 +117,9 @@ private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit) {
                     settings.mediaPlaybackRequiresUserGesture = false
                     settings.cacheMode = WebSettings.LOAD_DEFAULT
                     webChromeClient = WebChromeClient()
+                    // Durable, origin-independent credentials so the page never has to
+                    // re-scan a QR once paired (see DeckBridge / Store).
+                    addJavascriptInterface(DeckBridge(Store(ctx)), "AndroidBridge")
                     webViewClient = ShellClient(
                         fingerprint,
                         onError = { error = true },

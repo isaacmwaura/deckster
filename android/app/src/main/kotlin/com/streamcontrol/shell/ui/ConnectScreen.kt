@@ -108,6 +108,7 @@ fun ConnectScreen(
         Spacer(Modifier.height(8.dp))
         Button(
             onClick = { if (manual.isNotBlank()) onManual(manual) },
+            colors = ButtonDefaults.buttonColors(containerColor = CARD, contentColor = INK),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Connect") }
 

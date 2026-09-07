@@ -45,9 +45,10 @@ pip install -r requirements.txt
 python -m agent.main
 ```
 
-A tray icon appears. Click **Settings…** to open the control panel (it opens in your
-browser, on `localhost` only). There you'll see the **connect URL**, the **pairing
-code**, and toggles for USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
+A tray icon appears and the **Deckster control panel** window opens. (Closing the
+window hides it to the tray; click the tray icon → **Show Deckster** to bring it
+back.) There you'll see the **connect URL**, the **pairing code**, and toggles for
+USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
 
 > Prefer a one‑click install? Grab `Deckster.exe` from the
 > [Releases](../../releases) page — no Python needed. It's unsigned (open source), so

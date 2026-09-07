@@ -4,9 +4,14 @@ A self-contained native window so the exe doesn't depend on a browser: it shows 
 pairing QR + code, the connect URL, the USB/Wi-Fi + TLS toggles, paired devices, and
 start-with-Windows. It talks directly to the in-process `Admin`, so no HTTP/browser.
 
+The layout is a collapsible left nav rail (Task-Manager style: click the ☰ to expand
+labels or collapse to icons) that switches the right-hand pane between Connect,
+Devices, Settings, and About. Built from a few small canvas-drawn widgets (rounded
+pill buttons, toggle switches, a status pill) so it reads like a modern dark app.
+
 Runs on its own UI thread (like the tray). Closing the window hides it to the tray
-(the server keeps running in the background); Quit stops everything. A small queue
-carries tray->window commands ("show"/"quit") so the tray thread never touches Tk.
+(the server keeps running); Quit stops everything. A small queue carries tray->window
+commands ("show"/"quit") so the tray thread never touches Tk.
 """
 from __future__ import annotations
 
@@ -16,9 +21,155 @@ from .log import get_logger
 
 log = get_logger("window")
 
-BG = "#0B0E14"; CARD = "#14161B"; CARD2 = "#191C22"; LINE = "#2A2F3A"
-INK = "#F2F3F5"; INK2 = "#C2C6CF"; SUB = "#9A9EA8"
-ACCENT = "#56C2FF"; GREEN = "#4DDB7F"; AMBER = "#FFB84D"; RED = "#E05A5A"
+# palette -----------------------------------------------------------------------
+BG = "#0B0E14"        # app background
+RAIL = "#0E1219"      # nav rail
+CARD = "#141821"      # raised card
+CARD2 = "#1E232E"     # control fill / active nav
+LINE = "#2B313C"      # borders / off-track
+INK = "#F3F5F8"       # primary text
+INK2 = "#B9BEC9"      # secondary text
+SUB = "#7E8494"       # muted labels
+ACCENT = "#5AC0FF"
+ACCENT_HOVER = "#7FD0FF"
+ACCENT_INK = "#052033"  # text on an accent fill
+GREEN = "#4FDB86"
+AMBER = "#FFB454"
+RED = "#F06A6A"
+
+RAIL_MIN = 60         # collapsed (icons only)
+RAIL_MAX = 194        # expanded (icons + labels)
+
+
+def _round(cv, x1, y1, x2, y2, r, **kw):
+    """Draw a smooth rounded rectangle on a canvas; returns the polygon id."""
+    r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+           x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return cv.create_polygon(pts, smooth=True, **kw)
+
+
+class PillButton:
+    """A rounded button drawn on its own small canvas so it packs like a widget.
+
+    kinds: 'primary' (accent), 'seg' (segmented; use set_active), 'secondary',
+    'danger', 'ghost' (borderless).
+    """
+
+    def __init__(self, parent, text, command=None, kind="secondary",
+                 width=140, height=38, bg=CARD, radius=12,
+                 font=("Segoe UI", 10, "bold")):
+        import tkinter as tk
+
+        self.cv = tk.Canvas(parent, width=width, height=height, bg=bg,
+                            highlightthickness=0, bd=0, cursor="hand2")
+        self.command = command
+        self.kind = kind
+        self.active = False
+        self._hover = False
+        self._shape = _round(self.cv, 1, 1, width - 1, height - 1, radius,
+                             fill=CARD2, outline="")
+        self._text = self.cv.create_text(width / 2, height / 2, text=text,
+                                         fill=INK, font=font)
+        self.cv.bind("<Enter>", self._on_enter)
+        self.cv.bind("<Leave>", self._on_leave)
+        self.cv.bind("<Button-1>", self._on_click)
+        self._apply()
+
+    def pack(self, **kw):
+        self.cv.pack(**kw); return self
+
+    def set_text(self, text):
+        self.cv.itemconfig(self._text, text=text)
+
+    def set_active(self, active):
+        if active != self.active:
+            self.active = active
+            self._apply()
+
+    def _colors(self):
+        if self.kind == "primary":
+            return (ACCENT_HOVER if self._hover else ACCENT), ACCENT_INK
+        if self.kind == "seg":
+            if self.active:
+                return (ACCENT_HOVER if self._hover else ACCENT), ACCENT_INK
+            return (LINE if self._hover else CARD2), INK2
+        if self.kind == "danger":
+            return (LINE if self._hover else CARD2), RED
+        if self.kind == "ghost":
+            return (CARD if self._hover else self.cv["bg"]), INK2
+        return (LINE if self._hover else CARD2), INK  # secondary
+
+    def _apply(self):
+        fill, fg = self._colors()
+        self.cv.itemconfig(self._shape, fill=fill)
+        self.cv.itemconfig(self._text, fill=fg)
+
+    def _on_enter(self, _e): self._hover = True; self._apply()
+    def _on_leave(self, _e): self._hover = False; self._apply()
+    def _on_click(self, _e):
+        if self.command:
+            self.command()
+
+
+class ToggleSwitch:
+    """An iOS-style toggle drawn on a canvas. set() reflects state without firing."""
+    W = 48
+    H = 26
+
+    def __init__(self, parent, command=None, bg=BG):
+        import tkinter as tk
+
+        self.cv = tk.Canvas(parent, width=self.W, height=self.H, bg=bg,
+                            highlightthickness=0, bd=0, cursor="hand2")
+        self.command = command
+        self.on = False
+        self._track = _round(self.cv, 1, 1, self.W - 1, self.H - 1,
+                             (self.H - 2) / 2, fill=LINE, outline="")
+        r = self.H - 8
+        self._knob = self.cv.create_oval(4, 4, 4 + r, 4 + r, fill=INK, outline="")
+        self.cv.bind("<Button-1>", self._on_click)
+
+    def pack(self, **kw):
+        self.cv.pack(**kw); return self
+
+    def set(self, on):
+        self.on = bool(on); self._render()
+
+    def _render(self):
+        r = self.H - 8
+        x = (self.W - 4 - r) if self.on else 4
+        self.cv.coords(self._knob, x, 4, x + r, 4 + r)
+        self.cv.itemconfig(self._track, fill=(ACCENT if self.on else LINE))
+        self.cv.itemconfig(self._knob, fill=(ACCENT_INK if self.on else INK))
+
+    def _on_click(self, _e):
+        self.on = not self.on
+        self._render()
+        if self.command:
+            self.command(self.on)
+
+
+class StatusPill:
+    """A rounded pill with a coloured dot + short label (connection status)."""
+
+    def __init__(self, parent, bg=BG, width=190, height=28):
+        import tkinter as tk
+
+        self.cv = tk.Canvas(parent, width=width, height=height, bg=bg,
+                            highlightthickness=0, bd=0)
+        _round(self.cv, 1, 1, width - 1, height - 1, height / 2, fill=CARD, outline="")
+        cy = height / 2
+        self._dot = self.cv.create_oval(13, cy - 4, 21, cy + 4, fill=GREEN, outline="")
+        self._txt = self.cv.create_text(30, cy, text="", anchor="w", fill=INK2,
+                                        font=("Segoe UI", 9, "bold"))
+
+    def pack(self, **kw):
+        self.cv.pack(**kw); return self
+
+    def set(self, text, color):
+        self.cv.itemconfig(self._dot, fill=color)
+        self.cv.itemconfig(self._txt, text=text)
 
 
 class DecksterWindow:
@@ -30,12 +181,14 @@ class DecksterWindow:
         self.cmd_queue = cmd_queue
         self._qr_img = None
         self._qr_shown = ""
+        self.rail_expanded = True
+        self.active_section = "connect"
 
         self.root = tk.Tk()
         self.root.title("Deckster")
         self.root.configure(bg=BG)
-        self.root.geometry("470x690")
-        self.root.minsize(440, 600)
+        self.root.geometry("660x680")
+        self.root.minsize(600, 620)
         self._icon_img = None
         if icon_path:
             try:
@@ -53,95 +206,236 @@ class DecksterWindow:
     def _build(self):
         import tkinter as tk
 
-        pad = {"padx": 18}
-        header = tk.Frame(self.root, bg=BG)
-        header.pack(fill="x", pady=(16, 6), **pad)
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True)
+
+        # left nav rail --------------------------------------------------
+        self.rail = tk.Frame(body, bg=RAIL, width=RAIL_MAX)
+        self.rail.pack(side="left", fill="y")
+        self.rail.pack_propagate(False)
+        tk.Frame(body, bg=LINE, width=1).pack(side="left", fill="y")   # hairline divider
+
+        ham = tk.Frame(self.rail, bg=RAIL)
+        ham.pack(fill="x")
+        self.ham_btn = tk.Label(ham, text="☰", bg=RAIL, fg=INK, cursor="hand2",
+                                font=("Segoe UI Symbol", 15), width=2)
+        self.ham_btn.pack(side="left", padx=(20, 0), pady=(16, 12))
+        self.ham_btn.bind("<Button-1>", lambda e: self._toggle_rail())
+
+        self._nav = {}
+        for key, glyph, label in (("connect", "▦", "Connect"),
+                                  ("devices", "☷", "Devices"),
+                                  ("settings", "⚙", "Settings"),
+                                  ("about", "ⓘ", "About")):
+            self._nav[key] = self._make_nav(key, glyph, label)
+
+        # right column: header + content + footer ------------------------
+        right = tk.Frame(body, bg=BG)
+        right.pack(side="left", fill="both", expand=True)
+
+        header = tk.Frame(right, bg=BG)
+        header.pack(fill="x", padx=22, pady=(16, 8))
         tk.Label(header, text="Deckster", bg=BG, fg=INK,
-                 font=("Segoe UI", 18, "bold")).pack(side="left")
+                 font=("Segoe UI Semibold", 18)).pack(side="left")
         self.ver = tk.Label(header, text="", bg=BG, fg=SUB, font=("Segoe UI", 9))
-        self.ver.pack(side="left", padx=6, pady=(6, 0))
+        self.ver.pack(side="left", padx=6, pady=(7, 0))
+        self.status = StatusPill(header).pack(side="right", pady=2)
 
-        self.status = tk.Label(self.root, text="", bg=BG, fg=GREEN,
-                               font=("Segoe UI", 10, "bold"), anchor="w")
-        self.status.pack(fill="x", **pad)
+        footer = tk.Frame(right, bg=BG)
+        footer.pack(side="bottom", fill="x", padx=22, pady=12)
+        PillButton(footer, "Hide to tray", self._hide, kind="ghost",
+                   width=140, height=36, bg=BG).pack(side="left")
+        PillButton(footer, "Quit", self._quit, kind="danger",
+                   width=110, height=36, bg=BG).pack(side="right")
 
-        # QR + code
-        qr_card = tk.Frame(self.root, bg=CARD)
-        qr_card.pack(fill="x", pady=8, **pad)
-        self.qr_label = tk.Label(qr_card, bg="#FFFFFF")
-        self.qr_label.pack(pady=12)
-        self.code = tk.Label(qr_card, text="— — — — — —", bg=CARD, fg=INK,
-                             font=("Consolas", 20, "bold"))
+        self.content = tk.Frame(right, bg=BG)
+        self.content.pack(fill="both", expand=True, padx=22)
+
+        # sections (built once; shown one at a time)
+        self.sections = {
+            "connect": self._build_connect(),
+            "devices": self._build_devices(),
+            "settings": self._build_settings(),
+            "about": self._build_about(),
+        }
+        self._show_section("connect")
+
+    # ---- nav rail ----------------------------------------------------------
+    def _make_nav(self, key, glyph, label):
+        import tkinter as tk
+        row = tk.Frame(self.rail, bg=RAIL, cursor="hand2")
+        row.pack(fill="x")
+        ic = tk.Label(row, text=glyph, bg=RAIL, fg=INK2,
+                      font=("Segoe UI Symbol", 15), width=2)
+        ic.pack(side="left", padx=(20, 0), pady=11)
+        tx = tk.Label(row, text=label, bg=RAIL, fg=INK2,
+                      font=("Segoe UI", 10, "bold"), anchor="w")
+        tx.pack(side="left", padx=(12, 0))
+        for w in (row, ic, tx):
+            w.bind("<Button-1>", lambda e, k=key: self._show_section(k))
+            w.bind("<Enter>", lambda e, k=key: self._nav_hover(k, True))
+            w.bind("<Leave>", lambda e, k=key: self._nav_hover(k, False))
+        return {"row": row, "ic": ic, "tx": tx}
+
+    def _nav_hover(self, key, on):
+        if key == self.active_section:
+            return
+        bg = "#151a22" if on else RAIL
+        n = self._nav[key]
+        n["row"].config(bg=bg); n["ic"].config(bg=bg); n["tx"].config(bg=bg)
+
+    def _toggle_rail(self):
+        self.rail_expanded = not self.rail_expanded
+        self.rail.config(width=RAIL_MAX if self.rail_expanded else RAIL_MIN)
+        for n in self._nav.values():
+            if self.rail_expanded:
+                n["tx"].pack(side="left", padx=(12, 0))
+            else:
+                n["tx"].pack_forget()
+
+    def _show_section(self, key):
+        for f in self.sections.values():
+            f.pack_forget()
+        self.sections[key].pack(fill="both", expand=True)
+        self.active_section = key
+        for k, n in self._nav.items():
+            active = k == key
+            bg = CARD2 if active else RAIL
+            fg = ACCENT if active else INK2
+            n["row"].config(bg=bg); n["ic"].config(bg=bg, fg=fg); n["tx"].config(bg=bg, fg=fg)
+
+    # ---- sections ----------------------------------------------------------
+    def _build_connect(self):
+        import tkinter as tk
+        f = tk.Frame(self.content, bg=BG)
+
+        qr_card = tk.Frame(f, bg=CARD, highlightthickness=1,
+                           highlightbackground=LINE, highlightcolor=LINE)
+        qr_card.pack(fill="x")
+        white = tk.Frame(qr_card, bg="#FFFFFF")
+        white.pack(pady=(14, 8))
+        self.qr_label = tk.Label(white, bg="#FFFFFF", padx=8, pady=8)
+        self.qr_label.pack()
+        self.code = tk.Label(qr_card, text="— — — — — —",
+                             bg=CARD, fg=INK, font=("Consolas", 21, "bold"))
         self.code.pack()
         tk.Label(qr_card, text="Scan the QR on the phone, or enter this code",
-                 bg=CARD, fg=SUB, font=("Segoe UI", 9)).pack(pady=(0, 6))
-        self._btn(qr_card, "New code", self._new_code).pack(pady=(0, 12))
+                 bg=CARD, fg=SUB, font=("Segoe UI", 9)).pack(pady=(2, 8))
+        PillButton(qr_card, "New code", self._new_code, kind="secondary",
+                   width=132, height=32, bg=CARD, radius=10).pack(pady=(0, 14))
 
-        # connect url
-        self.url = tk.Label(self.root, text="", bg=BG, fg=ACCENT,
+        self.url = tk.Label(f, text="", bg=BG, fg=ACCENT,
                             font=("Consolas", 10), anchor="w")
-        self.url.pack(fill="x", **pad)
+        self.url.pack(fill="x", pady=(14, 8))
 
-        # mode toggle
-        mode = tk.Frame(self.root, bg=BG)
-        mode.pack(fill="x", pady=(10, 4), **pad)
-        self.btn_usb = self._btn(mode, "USB · secure", lambda: self._set_mode("loopback"))
-        self.btn_usb.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self.btn_wifi = self._btn(mode, "Wi-Fi", lambda: self._set_mode("lan"))
-        self.btn_wifi.pack(side="left", expand=True, fill="x", padx=(4, 0))
+        mode = tk.Frame(f, bg=BG)
+        mode.pack(fill="x")
+        self.btn_usb = PillButton(mode, "USB · secure", lambda: self._set_mode("loopback"),
+                                  kind="seg", width=200, height=40, bg=BG)
+        self.btn_usb.pack(side="left")
+        self.btn_wifi = PillButton(mode, "Wi-Fi", lambda: self._set_mode("lan"),
+                                   kind="seg", width=200, height=40, bg=BG)
+        self.btn_wifi.pack(side="right")
 
-        # toggles
-        self.var_secure = tk.IntVar()
-        self.var_autostart = tk.IntVar()
-        self._check("Secure connection (TLS)", self.var_secure, self._toggle_secure)
-        self._check("Start with Windows", self.var_autostart, self._toggle_autostart)
+        # firewall warning (Wi-Fi only; packed into `f` on demand)
+        self.fw_frame = tk.Frame(f, bg=CARD, highlightthickness=1,
+                                 highlightbackground=AMBER, highlightcolor=AMBER)
+        tk.Label(self.fw_frame, text="⚠  Wi-Fi is blocked by Windows Firewall",
+                 bg=CARD, fg=AMBER, font=("Segoe UI", 9, "bold"),
+                 anchor="w").pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(self.fw_frame,
+                 text="The phone can't reach this PC over Wi-Fi until you allow it. "
+                      "USB works without this.",
+                 bg=CARD, fg=INK2, font=("Segoe UI", 8), anchor="w",
+                 wraplength=420, justify="left").pack(fill="x", padx=12, pady=(1, 8))
+        PillButton(self.fw_frame, "Allow Wi-Fi through the firewall", self._allow_firewall,
+                   kind="primary", width=420, height=34, bg=CARD).pack(padx=12, pady=(0, 12))
+        self._fw_shown = False
+        self._fw_parent = f
+        return f
 
-        # devices
-        tk.Label(self.root, text="PAIRED DEVICES", bg=BG, fg=SUB,
-                 font=("Segoe UI", 8, "bold")).pack(fill="x", pady=(10, 2), **pad)
-        dev = tk.Frame(self.root, bg=BG)
-        dev.pack(fill="both", expand=True, **pad)
-        self.devices = tk.Listbox(dev, bg=CARD, fg=INK2, height=4, borderwidth=0,
+    def _build_devices(self):
+        import tkinter as tk
+        f = tk.Frame(self.content, bg=BG)
+        tk.Label(f, text="PAIRED DEVICES", bg=BG, fg=SUB,
+                 font=("Segoe UI", 8, "bold")).pack(fill="x", pady=(4, 6))
+        card = tk.Frame(f, bg=CARD, highlightthickness=1,
+                        highlightbackground=LINE, highlightcolor=LINE)
+        card.pack(fill="both", expand=True)
+        self.devices = tk.Listbox(card, bg=CARD, fg=INK2, height=6, borderwidth=0,
                                   highlightthickness=0, selectbackground=CARD2,
                                   activestyle="none", font=("Segoe UI", 10))
-        self.devices.pack(side="left", fill="both", expand=True)
+        self.devices.pack(side="left", fill="both", expand=True, padx=(10, 6), pady=10)
         self._dev_ids: list[str] = []
-        devbtns = tk.Frame(dev, bg=BG)
-        devbtns.pack(side="left", fill="y", padx=(8, 0))
-        self._btn(devbtns, "Revoke", self._revoke, fg=RED).pack(fill="x", pady=(0, 4))
-        self._btn(devbtns, "Revoke all", self._revoke_all, fg=RED).pack(fill="x")
+        col = tk.Frame(card, bg=CARD)
+        col.pack(side="right", fill="y", padx=(0, 10), pady=10)
+        PillButton(col, "Revoke", self._revoke, kind="danger",
+                   width=108, height=32, bg=CARD, radius=9).pack(pady=(0, 6))
+        PillButton(col, "Revoke all", self._revoke_all, kind="danger",
+                   width=108, height=32, bg=CARD, radius=9).pack()
+        tk.Label(f, text="Revoked devices must scan the QR again to reconnect.",
+                 bg=BG, fg=SUB, font=("Segoe UI", 8)).pack(fill="x", pady=(8, 0))
+        return f
 
-        # footer
-        foot = tk.Frame(self.root, bg=BG)
-        foot.pack(fill="x", pady=12, **pad)
-        self._btn(foot, "Hide to tray", self._hide).pack(side="left")
-        self._btn(foot, "Quit", self._quit, fg=RED).pack(side="right")
-
-    def _btn(self, parent, text, cmd, fg=INK):
+    def _build_settings(self):
         import tkinter as tk
-        return tk.Button(parent, text=text, command=cmd, bg=CARD2, fg=fg,
-                         activebackground=LINE, activeforeground=fg, relief="flat",
-                         font=("Segoe UI", 10, "bold"), borderwidth=0, padx=12, pady=8,
-                         cursor="hand2")
+        f = tk.Frame(self.content, bg=BG)
+        card = tk.Frame(f, bg=CARD, highlightthickness=1,
+                        highlightbackground=LINE, highlightcolor=LINE)
+        card.pack(fill="x", pady=(2, 0))
+        self.var_secure = tk.IntVar()
+        self.var_autostart = tk.IntVar()
+        self.secure_toggle = self._toggle_row(card, "Secure connection (TLS)",
+                                               "Pin a self-signed cert on Wi-Fi.",
+                                               self._toggle_secure)
+        tk.Frame(card, bg=LINE, height=1).pack(fill="x", padx=14)
+        self.autostart_toggle = self._toggle_row(card, "Start with Windows",
+                                                 "Launch Deckster at login.",
+                                                 self._toggle_autostart)
+        tk.Label(f, text="More settings (idle-screen style, timeouts) are on the way.",
+                 bg=BG, fg=SUB, font=("Segoe UI", 8)).pack(fill="x", pady=(12, 0))
+        return f
 
-    def _check(self, text, var, cmd):
+    def _build_about(self):
         import tkinter as tk
-        c = tk.Checkbutton(self.root, text=text, variable=var, command=cmd,
-                           bg=BG, fg=INK2, selectcolor=CARD, activebackground=BG,
-                           activeforeground=INK, font=("Segoe UI", 10),
-                           anchor="w", borderwidth=0, highlightthickness=0)
-        c.pack(fill="x", padx=16, pady=1)
-        return c
+        f = tk.Frame(self.content, bg=BG)
+        card = tk.Frame(f, bg=CARD, highlightthickness=1,
+                        highlightbackground=LINE, highlightcolor=LINE)
+        card.pack(fill="x", pady=(2, 0))
+        tk.Label(card, text="Deckster", bg=CARD, fg=INK,
+                 font=("Segoe UI Semibold", 16)).pack(anchor="w", padx=16, pady=(14, 0))
+        self.about_ver = tk.Label(card, text="", bg=CARD, fg=INK2, font=("Segoe UI", 10))
+        self.about_ver.pack(anchor="w", padx=16, pady=(2, 2))
+        tk.Label(card, text="Turn your phone into a Windows audio mixer.",
+                 bg=CARD, fg=SUB, font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(0, 14))
+        return f
+
+    def _toggle_row(self, parent, text, sub, cmd):
+        import tkinter as tk
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", padx=14, pady=10)
+        txt = tk.Frame(row, bg=CARD)
+        txt.pack(side="left", fill="x", expand=True)
+        tk.Label(txt, text=text, bg=CARD, fg=INK, font=("Segoe UI", 10, "bold"),
+                 anchor="w").pack(fill="x")
+        tk.Label(txt, text=sub, bg=CARD, fg=SUB, font=("Segoe UI", 8),
+                 anchor="w").pack(fill="x")
+        sw = ToggleSwitch(row, cmd, bg=CARD)
+        sw.pack(side="right")
+        return sw
+
+    def _btn(self, parent, text, cmd, fg=INK):  # kept for compatibility
+        return PillButton(parent, text, cmd, bg=parent["bg"]).cv
 
     # ---- actions (run on the UI thread; Admin marshals to the server loop) ----
     def _set_mode(self, m):
         try: self.admin.set_mode(m)
         except Exception: log.exception("set_mode")
-    def _toggle_secure(self):
-        try: self.admin.set_secure(bool(self.var_secure.get()))
+    def _toggle_secure(self, on):
+        try: self.admin.set_secure(bool(on))
         except Exception: log.exception("set_secure")
-    def _toggle_autostart(self):
-        try: self.admin.set_autostart(bool(self.var_autostart.get()))
+    def _toggle_autostart(self, on):
+        try: self.admin.set_autostart(bool(on))
         except Exception: log.exception("set_autostart")
     def _new_code(self):
         try: self.admin.refresh_code()
@@ -154,6 +448,9 @@ class DecksterWindow:
     def _revoke_all(self):
         try: self.admin.revoke_all()
         except Exception: log.exception("revoke_all")
+    def _allow_firewall(self):
+        try: self.admin.allow_firewall()      # pops one UAC prompt; user accepts
+        except Exception: log.exception("allow_firewall")
 
     def _hide(self):
         self.root.withdraw()
@@ -180,22 +477,33 @@ class DecksterWindow:
     def _refresh(self):
         try:
             s = self.admin.state()
-            self.ver.config(text="v" + str(s.get("version", "")))
+            ver = "v" + str(s.get("version", ""))
+            self.ver.config(text=ver)
+            if hasattr(self, "about_ver"): self.about_ver.config(text=ver)
             lan = s.get("mode") == "lan"
-            self.status.config(
-                text=("● Wi-Fi · on your LAN" if lan else "● USB · off-network"),
-                fg=(AMBER if lan else GREEN))
+            self.status.set("Wi-Fi · on your LAN" if lan else "USB · off-network",
+                            AMBER if lan else GREEN)
             self.url.config(text=str(s.get("connectUrl", "")))
             self.code.config(text=" ".join(str(s.get("pairCode", "")) or "------"))
-            self.btn_usb.config(bg=(CARD2 if lan else ACCENT), fg=(INK if lan else "#08121A"))
-            self.btn_wifi.config(bg=(ACCENT if lan else CARD2), fg=("#08121A" if lan else INK))
-            self.var_secure.set(1 if s.get("secure") else 0)
-            self.var_autostart.set(1 if s.get("autostart") else 0)
+            self.btn_usb.set_active(not lan)
+            self.btn_wifi.set_active(lan)
+            self.secure_toggle.set(bool(s.get("secure")))
+            self.autostart_toggle.set(bool(s.get("autostart")))
+            self._set_firewall_warning(bool(s.get("firewallNeeded")))
             self._fill_devices(s.get("devices", []))
             self._update_qr(s.get("qrPath", ""))
         except Exception:  # noqa: BLE001
             log.exception("window refresh")
         self.root.after(2000, self._refresh)
+
+    def _set_firewall_warning(self, needed: bool):
+        if needed == self._fw_shown:
+            return
+        self._fw_shown = needed
+        if needed:
+            self.fw_frame.pack(in_=self._fw_parent, fill="x", pady=(12, 0))
+        else:
+            self.fw_frame.pack_forget()
 
     def _fill_devices(self, devices):
         ids = [d.get("id") for d in devices]
@@ -215,7 +523,7 @@ class DecksterWindow:
             return
         try:
             from PIL import Image, ImageTk
-            img = Image.open(path).convert("RGB").resize((200, 200), Image.NEAREST)
+            img = Image.open(path).convert("RGB").resize((168, 168), Image.NEAREST)
             self._qr_img = ImageTk.PhotoImage(img)
             self.qr_label.config(image=self._qr_img)
             self._qr_shown = path

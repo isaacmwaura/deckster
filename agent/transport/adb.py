@@ -12,11 +12,14 @@ after-build).
 from __future__ import annotations
 
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
 from typing import Callable
+
+ADB_SERVER_PORT = 5037
 
 from ..config import resource_root
 from ..log import get_logger
@@ -89,6 +92,7 @@ class AdbReverse:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._reversed_serials: set[str] = set()
+        self._server_proc: "subprocess.Popen | None" = None
 
     def available(self) -> bool:
         return self._adb is not None
@@ -115,9 +119,50 @@ class AdbReverse:
         if not self.available():
             log.info("adb not found; wired path disabled (Wi-Fi/loopback still work)")
             return
+        self._ensure_server_hidden()
         self._thread = threading.Thread(target=self._watch, args=(interval,),
                                         name="adb-watch", daemon=True)
         self._thread.start()
+
+    # ---- adb server (started hidden so it never flashes a console) --------
+    @staticmethod
+    def _server_running() -> bool:
+        """True if an adb server is already listening on 5037 (any tool's)."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.3)
+            try:
+                s.connect(("127.0.0.1", ADB_SERVER_PORT))
+                return True
+            except OSError:
+                return False
+
+    def _ensure_server_hidden(self) -> None:
+        """Make sure the adb server is up, without flashing a console.
+
+        `adb start-server`/`adb devices` let adb *fork* the server itself, and that
+        fork briefly pops a console window in the windowed exe (confirmed: the fork's
+        conhost is the flash). Instead we start the server in-process with
+        `adb nodaemon server` as our own detached, no-window child — so no fork, no
+        console. If a server is already running (e.g. Android Studio started one) we
+        leave it alone. Best-effort: on any failure the watcher's own adb calls will
+        still bring a server up (with the old one-time flash) rather than break.
+        """
+        if not self._adb or self._server_running():
+            return
+        try:
+            self._server_proc = subprocess.Popen(
+                [self._adb, "nodaemon", "server"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, **_no_window_kwargs(),
+            )
+        except (OSError, subprocess.SubprocessError):
+            log.warning("could not pre-start adb server; will fall back to adb's own")
+            return
+        for _ in range(30):                        # wait up to ~3s for it to bind
+            if self._server_running():
+                log.info("adb server started (hidden, in-process)")
+                return
+            time.sleep(0.1)
 
     def _watch(self, interval: float) -> None:
         log.info("adb watcher started (adb=%s)", self._adb)
