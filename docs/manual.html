@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deckster — How it works</title>
+<style>
+:root{
+  --navy:#1B3A5C; --blue:#2E75B6; --lblue:#BDD7EE; --lblue2:#E8F4FB;
+  --amber:#D4713A; --lamber:#FFF2CC; --red:#C00000; --lred:#FCE4D6;
+  --green:#2f7d4f; --lgreen:#E2EFDA; --grey:#595959; --lgrey:#F5F5F5; --border:#D0D0D0;
+  --brand:#25b268;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:15px;line-height:1.65;color:#222;background:#fff;max-width:900px;margin:0 auto;padding:0 24px 60px;}
+h1{font-size:2rem;color:var(--navy);margin:48px 0 12px;border-bottom:3px solid var(--blue);padding-bottom:8px;}
+h2{font-size:1.4rem;color:var(--blue);margin:36px 0 10px;}
+h3{font-size:1.1rem;color:var(--navy);margin:24px 0 8px;}
+p{margin:10px 0;} ul,ol{margin:10px 0 10px 28px;} li{margin:5px 0;}
+code{background:var(--lgrey);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-family:'Cascadia Code','Consolas',monospace;font-size:13px;}
+.callout{border-radius:6px;padding:14px 18px;margin:20px 0;border-left:5px solid;}
+.callout.info{background:var(--lblue2);border-color:var(--blue);}
+.callout.warn{background:var(--lamber);border-color:var(--amber);}
+.callout.good{background:var(--lgreen);border-color:var(--green);}
+.callout.code{background:#1e1e2e;border-color:var(--navy);color:#cdd6f4;font-family:'Cascadia Code','Consolas',monospace;font-size:13px;}
+.callout-title{font-weight:700;margin-bottom:6px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.5px;}
+.callout.info .callout-title{color:var(--blue);} .callout.warn .callout-title{color:var(--amber);}
+.callout.good .callout-title{color:var(--green);} .callout.code .callout-title{color:#89dceb;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
+th{background:var(--navy);color:#fff;padding:9px 12px;text-align:left;font-size:0.85rem;}
+td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top;}
+tr:nth-child(even) td{background:var(--lgrey);}
+.fig-wrap{margin:28px 0 8px;} .fig-wrap svg{width:100%;height:auto;display:block;}
+.fig-cap{text-align:center;font-size:13px;color:var(--grey);font-style:italic;margin:6px 0 24px;}
+.nav{background:var(--navy);color:#fff;padding:12px 18px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;margin:0 -24px 32px;flex-wrap:wrap;gap:8px;}
+.nav a{color:var(--lblue);text-decoration:none;font-size:13px;} .nav a:hover{color:#fff;}
+.print-btn{background:var(--blue);color:#fff!important;padding:6px 16px;border-radius:4px;font-weight:600;border:none;font-size:13px;cursor:pointer;}
+.cover{margin:40px 0 8px;padding:34px 30px;background:linear-gradient(135deg,#12202f,#1B3A5C);border-radius:14px;color:#fff;}
+.cover .logo{font-size:2.5rem;font-weight:800;letter-spacing:-1px;color:#fff;}
+.cover .logo b{color:var(--brand);}
+.cover .tag{font-size:1.15rem;color:var(--lblue);margin-top:6px;}
+.cover .meta{margin-top:18px;font-size:13px;color:#aebfd0;}
+.pill{display:inline-block;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:#dbe7f3;border-radius:999px;padding:3px 11px;font-size:12px;margin:3px 4px 0 0;}
+@page wide{size:297mm 210mm;margin:1.2cm 2cm;}
+.landscape-section{page:wide;}
+@media screen{.landscape-section{margin:0 -60px;padding:16px 60px;background:#fafafa;border-radius:8px;border:1px dashed #ccc;}}
+@media print{
+  .nav{display:none!important;} body{padding:0 20px;font-size:13px;}
+  h1{page-break-before:always;} .cover{page-break-after:always;} .no-break{page-break-inside:avoid;}
+  .landscape-section{break-before:page;break-after:page;margin:0;border:none;background:none;padding:0;}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <span style="font-weight:700;font-size:14px;">Deckster · Manual</span>
+  <span style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+    <a href="#what">What it does</a>
+    <a href="#how">How it works</a>
+    <a href="#connect">Connecting</a>
+    <a href="#security">Security</a>
+    <a href="#devs">For developers</a>
+    <button class="print-btn" onclick="window.print()">Save as PDF</button>
+  </span>
+</nav>
+
+<div class="cover">
+  <div class="logo">Deck<b>ster</b></div>
+  <div class="tag">Turn a spare phone into a wireless audio mixer for your Windows PC.</div>
+  <div class="meta">
+    A plain-language manual: what Deckster does, how the pieces fit together, and enough of the
+    architecture to use it confidently — or fork it.
+    <div style="margin-top:12px;">
+      <span class="pill">Per-app volume &amp; mute</span>
+      <span class="pill">Microphone control</span>
+      <span class="pill">Device switching</span>
+      <span class="pill">Now-playing transport</span>
+      <span class="pill">USB or Wi-Fi</span>
+      <span class="pill">No extra hardware</span>
+    </div>
+  </div>
+</div>
+
+<p>Deckster is a free, no-hardware alternative to a Stream Deck or GoXLR. A tiny program (the
+<em>agent</em>) runs on your Windows PC and serves a touch app to your phone. Your phone becomes the
+mixer: one tile per application, a jog dial for volume, a mic button, device pickers, and
+media controls — for streamers, gamers, or anyone who wants their audio controls off the desktop and
+under their thumb.</p>
+
+<div class="callout good">
+  <div class="callout-title">The one-sentence version</div>
+  <p>Your phone shows a touch mixer; the PC agent applies what you touch to Windows audio in real time,
+  and streams the current state back so the phone always matches the PC.</p>
+</div>
+
+<h1 id="what">What Deckster does</h1>
+<p>Everything you control lives on the phone as a touch surface. The headline capabilities:</p>
+<ul>
+  <li><b>Per-app volume &amp; mute</b> — a tile for each app that is playing sound (your voice chat, browser,
+  music, game), showing the real Windows app icon. Drag the jog dial to set a level.</li>
+  <li><b>Microphone</b> — a one-tap mic mute that is always in reach, plus mic sensitivity.</li>
+  <li><b>Per-app mic mute</b> — Windows cannot mute one app's microphone on its own, so Deckster fires that
+  app's own mute / push-to-talk hotkey for you.</li>
+  <li><b>Output / input switching</b> — pick speakers/headset and microphone from the phone, with live
+  signal meters so you can see what is active.</li>
+  <li><b>Now playing</b> — title, artist, album art, and play/pause/next/previous for players that report to
+  Windows (music apps and the browser tab that is playing).</li>
+  <li><b>Made for a mount</b> — fullscreen, landscape-locked, screen stays awake, with a screen-saver that
+  guards against burn-in on an always-on phone.</li>
+</ul>
+
+<h1 id="how">How it works</h1>
+<p>Deckster is three cooperating parts: the <b>phone</b> (a touch page, shown either by a small native
+Android app or by any browser), the <b>link</b> between phone and PC (a USB cable or Wi-Fi), and the
+<b>agent</b> on the PC (which does the real work against Windows audio). The phone never talks to Windows
+directly — it only ever talks to the agent, which keeps the phone simple and the PC in control.</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 860 620" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,system-ui,sans-serif">
+  <defs>
+    <marker id="bi" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B3A5C"/>
+    </marker>
+  </defs>
+
+  <!-- Band 1: PHONE -->
+  <rect x="40" y="20" width="780" height="100" rx="10" fill="#E8F4FB" stroke="#2E75B6" stroke-width="2"/>
+  <text x="56" y="42" font-size="13" font-weight="700" fill="#2E75B6" letter-spacing="1">1 · YOUR PHONE</text>
+  <rect x="72" y="52" width="348" height="54" rx="8" fill="#fff" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="246" y="74" text-anchor="middle" font-size="14.5" font-weight="600" fill="#1B3A5C">Android app</text>
+  <text x="246" y="93" text-anchor="middle" font-size="12" fill="#595959">a native shell hosting a web view</text>
+  <rect x="440" y="52" width="348" height="54" rx="8" fill="#fff" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="614" y="74" text-anchor="middle" font-size="14.5" font-weight="600" fill="#1B3A5C">iPhone / any browser</text>
+  <text x="614" y="93" text-anchor="middle" font-size="12" fill="#595959">opens the same touch page</text>
+
+  <line x1="430" y1="120" x2="430" y2="156" stroke="#1B3A5C" stroke-width="2.2" marker-start="url(#bi)" marker-end="url(#bi)"/>
+
+  <!-- Band 2: LINK -->
+  <rect x="40" y="156" width="780" height="100" rx="10" fill="#F5F5F5" stroke="#595959" stroke-width="2"/>
+  <text x="56" y="178" font-size="13" font-weight="700" fill="#595959" letter-spacing="1">2 · THE LINK</text>
+  <rect x="72" y="188" width="348" height="54" rx="8" fill="#fff" stroke="#595959" stroke-width="1.5"/>
+  <text x="246" y="210" text-anchor="middle" font-size="14.5" font-weight="600" fill="#1B3A5C">USB cable</text>
+  <text x="246" y="229" text-anchor="middle" font-size="12" fill="#595959">tunnels to the PC — stays off the network</text>
+  <rect x="440" y="188" width="348" height="54" rx="8" fill="#fff" stroke="#595959" stroke-width="1.5"/>
+  <text x="614" y="210" text-anchor="middle" font-size="14.5" font-weight="600" fill="#1B3A5C">Wi-Fi (same network)</text>
+  <text x="614" y="229" text-anchor="middle" font-size="12" fill="#595959">optional encryption, certificate pinned</text>
+
+  <line x1="430" y1="256" x2="430" y2="292" stroke="#1B3A5C" stroke-width="2.2" marker-start="url(#bi)" marker-end="url(#bi)"/>
+
+  <!-- Band 3: AGENT -->
+  <rect x="40" y="292" width="780" height="158" rx="10" fill="#BDD7EE" stroke="#1B3A5C" stroke-width="2"/>
+  <text x="56" y="314" font-size="13" font-weight="700" fill="#1B3A5C" letter-spacing="1">3 · DECKSTER AGENT — runs on your PC</text>
+  <rect x="60" y="330" width="173" height="102" rx="8" fill="#fff" stroke="#1B3A5C" stroke-width="1.5"/>
+  <text x="146.5" y="362" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Web + live</text>
+  <text x="146.5" y="380" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">connection</text>
+  <text x="146.5" y="404" text-anchor="middle" font-size="11.5" fill="#595959">serves the app,</text>
+  <text x="146.5" y="419" text-anchor="middle" font-size="11.5" fill="#595959">streams state</text>
+  <rect x="249" y="330" width="173" height="102" rx="8" fill="#fff" stroke="#1B3A5C" stroke-width="1.5"/>
+  <text x="335.5" y="372" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Audio engine</text>
+  <text x="335.5" y="396" text-anchor="middle" font-size="11.5" fill="#595959">per-app &amp; device</text>
+  <text x="335.5" y="411" text-anchor="middle" font-size="11.5" fill="#595959">volume / mute</text>
+  <rect x="438" y="330" width="173" height="102" rx="8" fill="#fff" stroke="#1B3A5C" stroke-width="1.5"/>
+  <text x="524.5" y="372" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Media</text>
+  <text x="524.5" y="396" text-anchor="middle" font-size="11.5" fill="#595959">now-playing +</text>
+  <text x="524.5" y="411" text-anchor="middle" font-size="11.5" fill="#595959">transport keys</text>
+  <rect x="627" y="330" width="173" height="102" rx="8" fill="#fff" stroke="#1B3A5C" stroke-width="1.5"/>
+  <text x="713.5" y="372" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Hotkey macros</text>
+  <text x="713.5" y="396" text-anchor="middle" font-size="11.5" fill="#595959">per-app mic mute</text>
+  <text x="713.5" y="411" text-anchor="middle" font-size="11.5" fill="#595959">via app hotkeys</text>
+
+  <line x1="430" y1="450" x2="430" y2="486" stroke="#1B3A5C" stroke-width="2.2" marker-start="url(#bi)" marker-end="url(#bi)"/>
+
+  <!-- Band 4: WINDOWS -->
+  <rect x="40" y="486" width="780" height="114" rx="10" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="2"/>
+  <text x="56" y="508" font-size="13" font-weight="700" fill="#2f7d4f" letter-spacing="1">4 · WINDOWS</text>
+  <rect x="60" y="520" width="233" height="62" rx="8" fill="#fff" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="176.5" y="546" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Audio sessions</text>
+  <text x="176.5" y="565" text-anchor="middle" font-size="11.5" fill="#595959">per-app volume &amp; mute</text>
+  <rect x="313" y="520" width="233" height="62" rx="8" fill="#fff" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="429.5" y="546" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Audio devices</text>
+  <text x="429.5" y="565" text-anchor="middle" font-size="11.5" fill="#595959">outputs, inputs &amp; meters</text>
+  <rect x="566" y="520" width="233" height="62" rx="8" fill="#fff" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="682.5" y="546" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Media sessions</text>
+  <text x="682.5" y="565" text-anchor="middle" font-size="11.5" fill="#595959">now-playing metadata</text>
+</svg>
+</div>
+<p class="fig-cap">Figure 1 — The four layers. Every arrow is two-way: your touches travel down to Windows,
+and the resulting state streams back up so the phone always mirrors the PC. The phone only ever talks to
+the agent, never to Windows directly.</p>
+
+<h3>The phone</h3>
+<p>On Android you install a small native app; on an iPhone or anything else you just open a web address.
+Either way you are looking at the <em>same</em> touch page — the native app is a thin shell that hosts that
+page and adds a few conveniences (finding the PC over USB, scanning a pairing code, remembering the
+connection). The page keeps a live connection open to the agent so it updates the instant something
+changes on the PC.</p>
+
+<h3>The agent</h3>
+<p>The agent is the brain. It serves the touch page, holds the live connection to the phone, and turns
+each instruction into a real Windows action — set this app's volume, mute the microphone, switch the
+output device, skip the track. It also watches Windows and pushes changes back to the phone, so if you
+change the volume on the PC the phone's dial moves too.</p>
+
+<h3>The link</h3>
+<p>Two ways to connect, covered next. The short version: <b>USB</b> is the most private (traffic never
+touches your network) and lowest-latency; <b>Wi-Fi</b> is wireless and works for any phone with a browser.</p>
+
+<h1 id="connect">Connecting your phone</h1>
+<p>Pick the path that suits your phone. On Android the app supports both and can hand a live session from
+USB over to Wi-Fi if you unplug the cable; on an iPhone you use Wi-Fi in Safari.</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,system-ui,sans-serif">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E75B6"/>
+    </marker>
+  </defs>
+  <!-- USB row -->
+  <rect x="40" y="30" width="780" height="120" rx="10" fill="#E8F4FB" stroke="#2E75B6" stroke-width="2"/>
+  <text x="60" y="56" font-size="14" font-weight="700" fill="#2E75B6">USB · primary, most secure</text>
+  <rect x="60" y="70" width="150" height="60" rx="8" fill="#fff" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="135" y="97" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">Phone</text>
+  <text x="135" y="115" text-anchor="middle" font-size="11" fill="#595959">USB debugging on</text>
+  <line x1="212" y1="100" x2="330" y2="100" stroke="#2E75B6" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="271" y="92" text-anchor="middle" font-size="11" fill="#595959">USB cable</text>
+  <rect x="332" y="70" width="196" height="60" rx="8" fill="#fff" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="430" y="97" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">Private tunnel</text>
+  <text x="430" y="115" text-anchor="middle" font-size="11" fill="#595959">never leaves the cable</text>
+  <line x1="530" y1="100" x2="648" y2="100" stroke="#2E75B6" stroke-width="2" marker-end="url(#a2)"/>
+  <rect x="650" y="70" width="150" height="60" rx="8" fill="#fff" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="725" y="97" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">PC agent</text>
+  <text x="725" y="115" text-anchor="middle" font-size="11" fill="#595959">on this computer</text>
+
+  <!-- Wi-Fi row -->
+  <rect x="40" y="180" width="780" height="120" rx="10" fill="#FFF2CC" stroke="#D4713A" stroke-width="2"/>
+  <text x="60" y="206" font-size="14" font-weight="700" fill="#D4713A">Wi-Fi · wireless, any phone</text>
+  <rect x="60" y="220" width="150" height="60" rx="8" fill="#fff" stroke="#D4713A" stroke-width="1.5"/>
+  <text x="135" y="247" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">Phone</text>
+  <text x="135" y="265" text-anchor="middle" font-size="11" fill="#595959">scan the QR code</text>
+  <line x1="212" y1="250" x2="330" y2="250" stroke="#D4713A" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="271" y="242" text-anchor="middle" font-size="11" fill="#595959">home Wi-Fi</text>
+  <rect x="332" y="220" width="196" height="60" rx="8" fill="#fff" stroke="#D4713A" stroke-width="1.5"/>
+  <text x="430" y="244" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">Same network</text>
+  <text x="430" y="262" text-anchor="middle" font-size="11" fill="#595959">optional encrypted link</text>
+  <line x1="530" y1="250" x2="648" y2="250" stroke="#D4713A" stroke-width="2" marker-end="url(#a2)"/>
+  <rect x="650" y="220" width="150" height="60" rx="8" fill="#fff" stroke="#D4713A" stroke-width="1.5"/>
+  <text x="725" y="247" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">PC agent</text>
+  <text x="725" y="265" text-anchor="middle" font-size="11" fill="#595959">on this computer</text>
+</svg>
+</div>
+<p class="fig-cap">Figure 2 — The two connection paths. USB keeps the whole conversation inside the cable
+(nothing reaches your network); Wi-Fi carries it over your home network, optionally encrypted with a
+pinned certificate so there is no warning and nothing to install on the phone.</p>
+
+<h3>Android — use the app (recommended)</h3>
+<ol>
+  <li><b>USB:</b> enable Developer Options &rarr; USB debugging on the phone, plug it into the PC, and open
+  Deckster — it finds the PC over USB automatically. The first time, enter the 6-digit pairing code shown
+  on the PC.</li>
+  <li><b>Wi-Fi:</b> with phone and PC on the same network, choose Wi-Fi, scan the QR code (or type the PC's
+  address), and pair with the code. Turn on the secure connection for an encrypted link.</li>
+</ol>
+
+<h3>iPhone / iPad — use the browser</h3>
+<ol>
+  <li>On the PC, switch the connection to Wi-Fi.</li>
+  <li>On the iPhone, scan the QR code with the Camera app — it opens Safari and pairs in one step. (Or open
+  the address and type the 6-digit code.)</li>
+  <li>Tap Share &rarr; Add to Home Screen for a fullscreen, app-like icon.</li>
+</ol>
+
+<table>
+  <tr><th>Phone</th><th>Connection</th><th>Pairing</th><th>Secure link</th></tr>
+  <tr><td><b>Android (app)</b></td><td>USB (primary) or Wi-Fi</td><td>code, or scan QR</td><td>USB is off-network; Wi-Fi can pin an encrypted certificate</td></tr>
+  <tr><td><b>iPhone / other (browser)</b></td><td>Wi-Fi</td><td>scan QR with Camera, or code</td><td>every command is token-gated (encryption optional)</td></tr>
+</table>
+
+<h1 id="security">The security model</h1>
+<p>The design goal is simple: <b>only a phone you have deliberately paired can control your PC</b>, and even
+then only through the agent. Deckster runs as your normal user account — it never needs administrator
+rights.</p>
+
+<div class="fig-wrap">
+<svg viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,system-ui,sans-serif">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1B3A5C"/>
+    </marker>
+  </defs>
+  <rect x="40" y="40" width="200" height="70" rx="8" fill="#E8F4FB" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="140" y="70" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">New phone</text>
+  <text x="140" y="90" text-anchor="middle" font-size="11.5" fill="#595959">sees only the pairing screen</text>
+
+  <line x1="240" y1="75" x2="330" y2="75" stroke="#1B3A5C" stroke-width="2" marker-end="url(#a3)"/>
+  <text x="285" y="66" text-anchor="middle" font-size="11" fill="#595959">enter code</text>
+
+  <rect x="332" y="40" width="200" height="70" rx="8" fill="#FFF2CC" stroke="#D4713A" stroke-width="1.5"/>
+  <text x="432" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">One-time code</text>
+  <text x="432" y="84" text-anchor="middle" font-size="11.5" fill="#595959">shown on the PC —</text>
+  <text x="432" y="99" text-anchor="middle" font-size="11.5" fill="#595959">proves you are there</text>
+
+  <line x1="532" y1="75" x2="622" y2="75" stroke="#1B3A5C" stroke-width="2" marker-end="url(#a3)"/>
+  <text x="577" y="66" text-anchor="middle" font-size="11" fill="#595959">issues</text>
+
+  <rect x="624" y="40" width="196" height="70" rx="8" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="722" y="65" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">Per-device token</text>
+  <text x="722" y="84" text-anchor="middle" font-size="11.5" fill="#595959">only a hashed copy</text>
+  <text x="722" y="99" text-anchor="middle" font-size="11.5" fill="#595959">is stored on the PC</text>
+
+  <line x1="722" y1="110" x2="722" y2="150" stroke="#1B3A5C" stroke-width="2" marker-end="url(#a3)"/>
+  <rect x="490" y="150" width="330" height="64" rx="8" fill="#fff" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="655" y="176" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">Every later command carries the token</text>
+  <text x="655" y="196" text-anchor="middle" font-size="11.5" fill="#595959">no token, no control — unknown devices get nothing</text>
+
+  <rect x="40" y="150" width="410" height="120" rx="8" fill="#F5F5F5" stroke="#595959" stroke-width="1.5"/>
+  <text x="60" y="176" font-size="12.5" font-weight="700" fill="#595959">EXTRA WALLS</text>
+  <text x="60" y="200" font-size="12" fill="#333">• Wired USB keeps the agent off the network entirely.</text>
+  <text x="60" y="222" font-size="12" fill="#333">• Wi-Fi can be encrypted; the app pins the certificate.</text>
+  <text x="60" y="244" font-size="12" fill="#333">• The PC settings page is reachable only from the PC</text>
+  <text x="72" y="260" font-size="12" fill="#333">itself — a phone on the network can never open it.</text>
+</svg>
+</div>
+<p class="fig-cap">Figure 3 — Pairing once, then token-gated forever. The one-time code proves physical access
+to the PC; it issues a per-device token that every future command must present. The PC stores only a hashed
+copy of the token, so the file on disk cannot be replayed as a credential.</p>
+
+<ul>
+  <li><b>Pairing proves presence.</b> The one-time code is shown on the PC, so only someone at the PC can pair
+  a device.</li>
+  <li><b>Every command needs a valid token.</b> Unknown devices only ever see the pairing screen.</li>
+  <li><b>USB is off-network by default.</b> In the wired mode the agent is not exposed to the network at all.</li>
+  <li><b>Encryption is available on Wi-Fi.</b> The agent can serve an encrypted link; the Android app pins the
+  certificate's fingerprint, so the link is warning-free with nothing to install.</li>
+  <li><b>The settings page is local-only.</b> It answers only to the PC itself, never to a phone on the network.</li>
+</ul>
+
+<h1 id="devs">For developers — forking &amp; extending</h1>
+<p>Deckster is free software under the GNU General Public License version 3.0 (GPLv3). The codebase is small
+and deliberately layered so you can read one part without the others. This section is enough to find your
+way around and build it.</p>
+
+<h3>The stack</h3>
+<table>
+  <tr><th>Part</th><th>Built with</th><th>Responsibility</th></tr>
+  <tr><td>PC agent</td><td>Python (asyncio, an aiohttp web server)</td><td>Serves the UI, holds the live WebSocket, applies audio actions, streams state.</td></tr>
+  <tr><td>Audio &amp; media</td><td>Windows Core Audio and the System Media Transport Controls (SMTC)</td><td>Per-app and device volume/mute, live meters, and now-playing metadata.</td></tr>
+  <tr><td>Touch UI</td><td>Plain HTML, Cascading Style Sheets (CSS), and JavaScript — a Progressive Web App (PWA)</td><td>The mixer page: renders tiles and the dial, talks WebSocket, works offline as a shell.</td></tr>
+  <tr><td>Android app</td><td>Kotlin with Jetpack Compose, wrapping a web view</td><td>Finds the PC over USB, discovers it on Wi-Fi, scans the pairing QR, remembers the connection.</td></tr>
+</table>
+
+<h3>What happens when you drag the dial</h3>
+<p>Following one action end-to-end is the quickest way to understand the whole system.</p>
+
+<div class="landscape-section">
+<div class="fig-wrap">
+<svg viewBox="0 0 1180 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,system-ui,sans-serif">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E75B6"/>
+    </marker>
+    <marker id="a4b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2f7d4f"/>
+    </marker>
+  </defs>
+  <!-- 5 boxes across -->
+  <rect x="30"  y="70" width="190" height="80" rx="8" fill="#E8F4FB" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="125" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">1 · You drag</text>
+  <text x="125" y="120" text-anchor="middle" font-size="11.5" fill="#595959">the jog dial on</text>
+  <text x="125" y="135" text-anchor="middle" font-size="11.5" fill="#595959">the phone</text>
+
+  <rect x="290" y="70" width="190" height="80" rx="8" fill="#E8F4FB" stroke="#2E75B6" stroke-width="1.5"/>
+  <text x="385" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">2 · Page sends</text>
+  <text x="385" y="120" text-anchor="middle" font-size="11.5" fill="#595959">"set this app to</text>
+  <text x="385" y="135" text-anchor="middle" font-size="11.5" fill="#595959">62%" + token</text>
+
+  <rect x="550" y="70" width="190" height="80" rx="8" fill="#BDD7EE" stroke="#1B3A5C" stroke-width="1.5"/>
+  <text x="645" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">3 · Agent checks</text>
+  <text x="645" y="120" text-anchor="middle" font-size="11.5" fill="#595959">the token, then</text>
+  <text x="645" y="135" text-anchor="middle" font-size="11.5" fill="#595959">calls Windows</text>
+
+  <rect x="810" y="70" width="190" height="80" rx="8" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="1.5"/>
+  <text x="905" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">4 · Windows sets</text>
+  <text x="905" y="120" text-anchor="middle" font-size="11.5" fill="#595959">the app's volume</text>
+  <text x="905" y="135" text-anchor="middle" font-size="11.5" fill="#595959">to 62%</text>
+
+  <rect x="1000" y="185" width="150" height="70" rx="8" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="1.5" transform="translate(-60,0)"/>
+  <text x="1015" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">5 · New state</text>
+  <text x="1015" y="231" text-anchor="middle" font-size="11" fill="#595959">streams back</text>
+
+  <line x1="222" y1="110" x2="286" y2="110" stroke="#2E75B6" stroke-width="2" marker-end="url(#a4)"/>
+  <line x1="482" y1="110" x2="546" y2="110" stroke="#2E75B6" stroke-width="2" marker-end="url(#a4)"/>
+  <line x1="742" y1="110" x2="806" y2="110" stroke="#2E75B6" stroke-width="2" marker-end="url(#a4)"/>
+  <!-- return path -->
+  <line x1="905" y1="150" x2="905" y2="220" stroke="#2f7d4f" stroke-width="2" marker-end="url(#a4b)"/>
+  <line x1="880" y1="220" x2="125" y2="220" stroke="#2f7d4f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a4b)"/>
+  <line x1="125" y1="220" x2="125" y2="152" stroke="#2f7d4f" stroke-width="2" marker-end="url(#a4b)"/>
+  <text x="500" y="212" text-anchor="middle" font-size="11.5" fill="#2f7d4f" font-style="italic">every connected phone updates to match — the PC is the single source of truth</text>
+</svg>
+</div>
+</div>
+<p class="fig-cap">Figure 4 — One volume change, end to end. The blue path is the command going down; the green
+dashed path is the resulting state streaming back to <em>every</em> connected phone, which is why two phones
+(or the PC and a phone) never disagree.</p>
+
+<h3>Repository layout</h3>
+<table>
+  <tr><th>Folder</th><th>What's inside</th></tr>
+  <tr><td><code>agent/</code></td><td>The Python PC agent: the web/WebSocket server, the audio engine, media, hotkey macros, pairing/tokens, USB and Wi-Fi transport, and the desktop control-panel window.</td></tr>
+  <tr><td><code>web/</code></td><td>The touch control surface: <code>index.html</code>, <code>app.js</code>, <code>style.css</code>, and the service worker that makes it an installable app.</td></tr>
+  <tr><td><code>android/</code></td><td>The native Android shell (Kotlin + Compose) that hosts the web page and adds USB/Wi-Fi discovery and pairing.</td></tr>
+  <tr><td><code>build/</code></td><td>Packaging configuration for producing the standalone <code>Deckster.exe</code>.</td></tr>
+</table>
+
+<h3>Build it</h3>
+<div class="callout code">
+  <div class="callout-title">PC agent — run from source (Windows, Python 3.10+)</div>
+  <p>pip install -r requirements.txt<br>python -m agent.main</p>
+</div>
+<div class="callout code">
+  <div class="callout-title">PC agent — package to a single .exe</div>
+  <p>pip install pyinstaller<br>pyinstaller build/streamcontrol.spec --distpath dist --workpath build/_work --noconfirm</p>
+</div>
+<div class="callout code">
+  <div class="callout-title">Android app — build the APK (needs the Android SDK and a Java Development Kit 17+)</div>
+  <p>cd android<br>./gradlew :app:assembleDebug</p>
+</div>
+
+<h3>Extending it</h3>
+<p>Because the phone only speaks to the agent over one live connection, adding a control is usually two
+small changes: teach the agent a new instruction (validate it, act on Windows, include the result in the
+state it streams out) and add the button to the touch page that sends it. The UI never touches Windows,
+so you can prototype against the built-in mock audio backend with no hardware in the loop.</p>
+
+<div class="callout info">
+  <div class="callout-title">Where to start reading</div>
+  <p>Open the agent's web/WebSocket server to see the message types the phone and PC exchange, then the audio
+  engine to see how an instruction becomes a Windows call. The touch page's <code>app.js</code> shows the other
+  side of the same conversation.</p>
+</div>
+
+<h1 id="license">License</h1>
+<p>Deckster is free software licensed under the <b>GNU General Public License version 3.0 (GPLv3)</b>. You may
+use, study, share, and modify it; if you distribute a modified version, that version must also be released
+under the GPLv3. See the <code>LICENSE</code> file in the repository for the full text.</p>
+
+<div class="callout good">
+  <div class="callout-title">In short</div>
+  <p>A phone, a cable or your Wi-Fi, and a small agent on the PC. The phone shows the controls, the agent does
+  the work against Windows, and state flows back so everything stays in sync. That is the whole idea.</p>
+</div>
+
+</body>
+</html>

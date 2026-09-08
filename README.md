@@ -11,6 +11,10 @@ no‑hardware alternative to a Stream Deck or GoXLR for streamers and gamers.
 A tiny agent runs on the PC and serves a touch web app to the phone. On Android you
 install a thin native app (below); any other phone just opens it in the browser.
 
+> 📖 **Want the bigger picture?** The [illustrated manual](docs/manual.html) walks through how
+> Deckster works — the architecture, the connection paths, the security model, and how to fork
+> it — with diagrams. Open it in a browser (download or clone the repo to view it rendered).
+
 ---
 
 ## Features

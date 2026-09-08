@@ -20,6 +20,7 @@ sealed interface UiState {
     data object Searching : UiState                                  // probing USB
     data class NeedConnect(val devices: List<Pc>) : UiState          // no USB — offer Wi-Fi
     data class Connected(val url: String, val fingerprint: String) : UiState
+    data class OfferWifi(val pc: Pc) : UiState                       // USB dropped, PC is on Wi-Fi
 }
 
 /**
@@ -37,6 +38,9 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private val found = LinkedHashMap<String, Pc>()
     private val store = Store(app)
+    // When true, a resolved PC is OFFERED (OfferWifi) rather than auto-connected —
+    // the mode we run in after a USB drop, so the user chooses to move to Wi-Fi.
+    private var handoffMode = false
 
     init { probeUsbThenSearch() }
 
@@ -45,7 +49,52 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     /** Leave the current connection and return to the connect flow (the "Back" action). */
     fun disconnect() = probeUsbThenSearch()
 
+    /**
+     * The connected page reports it lost the PC (see DeckBridge.connectionLost). If we
+     * were on the WIRED link (localhost, via adb reverse) and the same PC is still on
+     * the Wi-Fi, offer to carry the session over — pulling the cable often just means
+     * "let me move the phone", not "disconnect". A LAN drop is left to the page's own
+     * reconnect/banner (we're already on Wi-Fi, nowhere better to hand off to).
+     * Runs from the JS-bridge thread, so bounce onto the main scope.
+     */
+    fun onConnectionLost(@Suppress("UNUSED_PARAMETER") origin: String) {
+        viewModelScope.launch {
+            val s = _state.value
+            if (s !is UiState.Connected || !isLocal(s.url)) return@launch
+            seekWifiHandoff()
+        }
+    }
+
+    /** User accepted the Wi-Fi handoff: reconnect to the PC over the LAN. */
+    fun acceptWifiHandoff() {
+        val s = _state.value
+        if (s is UiState.OfferWifi) connect(s.pc)     // -> Connected(lanUrl); the WebView reloads
+    }
+
+    /** User declined: they really meant to disconnect — return to the connect flow. */
+    fun declineWifiHandoff() {
+        handoffMode = false
+        probeUsbThenSearch()
+    }
+
+    private fun isLocal(url: String): Boolean {
+        val h = try { java.net.URI(url).host } catch (e: Exception) { null } ?: return false
+        return h == "localhost" || h == "127.0.0.1"
+    }
+
+    /** Briefly discover the PC on the LAN; the first one found becomes a Wi-Fi offer. */
+    private fun seekWifiHandoff() {
+        if (handoffMode) return
+        handoffMode = true
+        startDiscovery()
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(HANDOFF_TIMEOUT_MS)
+            if (handoffMode) { handoffMode = false; stopDiscovery() }   // not on the same Wi-Fi
+        }
+    }
+
     fun connect(pc: Pc) {
+        handoffMode = false
         stopDiscovery()
         store.rememberPcFromUrl(pc.url, pc.fingerprint, pc.name)
         _state.value = UiState.Connected(pc.url, pc.fingerprint)
@@ -69,6 +118,7 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
      * PC has been set up, opening the app just reconnects — no re-scan.
      */
     private fun probeUsbThenSearch() {
+        handoffMode = false
         _state.value = UiState.Searching
         viewModelScope.launch {
             if (withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health") }) {
@@ -121,6 +171,13 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
                 val fp = attrs["fp"]?.toString(Charsets.UTF_8) ?: ""
                 val scheme = if (secure) "https" else "http"
                 val pc = Pc(info.serviceName ?: "PC", "$scheme://$host:${info.port}/", fp)
+                // After a USB drop we OFFER the first PC we find on the LAN rather than
+                // auto-connecting — the user confirms the move to Wi-Fi (see onConnectionLost).
+                if (handoffMode) {
+                    handoffMode = false; stopDiscovery()
+                    if (_state.value is UiState.Connected) _state.value = UiState.OfferWifi(pc)
+                    return
+                }
                 // A trusted PC (its pinned fingerprint matches the one we remember)
                 // reappearing on the network -> reconnect automatically, no tap.
                 val knownFp = store.lastPcFingerprint()
@@ -141,5 +198,8 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() = stopDiscovery()
 
-    companion object { private const val SERVICE_TYPE = "_streamctl._tcp." }
+    companion object {
+        private const val SERVICE_TYPE = "_streamctl._tcp."
+        private const val HANDOFF_TIMEOUT_MS = 6000L   // give up the Wi-Fi offer if the PC isn't found
+    }
 }

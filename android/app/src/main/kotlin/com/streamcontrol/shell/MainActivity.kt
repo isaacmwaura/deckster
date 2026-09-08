@@ -20,7 +20,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -73,7 +76,16 @@ class MainActivity : AppCompatActivity() {
                         onRetry = { vm.retryUsb() },
                     )
                     is UiState.Connected ->
-                        ShellWebView(s.url, s.fingerprint, onBack = { vm.disconnect() })
+                        ShellWebView(
+                            s.url, s.fingerprint,
+                            onBack = { vm.disconnect() },
+                            onLost = { origin -> vm.onConnectionLost(origin) },
+                        )
+                    is UiState.OfferWifi -> WifiHandoffDialog(
+                        pcName = s.pc.name,
+                        onAccept = { vm.acceptWifiHandoff() },
+                        onDecline = { vm.declineWifiHandoff() },
+                    )
                 }
             }
         }
@@ -93,9 +105,27 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+/**
+ * Shown when a wired (USB) session drops but the PC is still reachable on Wi-Fi.
+ * Pulling the cable often just means "let me move the phone", so we offer to carry
+ * the session over rather than dumping the user back at the connect screen.
+ */
+@Composable
+private fun WifiHandoffDialog(pcName: String, onAccept: () -> Unit, onDecline: () -> Unit) {
+    Box(Modifier.fillMaxSize().background(BG)) {
+        AlertDialog(
+            onDismissRequest = onDecline,
+            title = { Text("USB disconnected") },
+            text = { Text("“$pcName” is still on your Wi-Fi. Keep the connection going over Wi-Fi?") },
+            confirmButton = { TextButton(onClick = onAccept) { Text("Reconnect over Wi-Fi") } },
+            dismissButton = { TextButton(onClick = onDecline) { Text("Not now") } },
+        )
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit) {
+private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit, onLost: (String) -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
     var error by remember { mutableStateOf(false) }
     BackHandler {
@@ -119,7 +149,7 @@ private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit) {
                     webChromeClient = WebChromeClient()
                     // Durable, origin-independent credentials so the page never has to
                     // re-scan a QR once paired (see DeckBridge / Store).
-                    addJavascriptInterface(DeckBridge(Store(ctx)), "AndroidBridge")
+                    addJavascriptInterface(DeckBridge(Store(ctx), onLost = onLost), "AndroidBridge")
                     webViewClient = ShellClient(
                         fingerprint,
                         onError = { error = true },

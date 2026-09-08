@@ -104,6 +104,7 @@
     this.orientation = "left";
     this.target = { value: 0, muted: false, accent: "#4ddb7f", source: "", mode: "jog", interactive: true };
     this.val = 0; this.muted = false; this.dragging = false; this.lastAngle = 0;
+    this.anchorVal = 0; this.anchorAxis = 0; this.dragDelta = 0;  // relative-drag state
     this._lastTouch = 0;   // suppresses the synthesized mousedown that follows a touch
     this.svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.host.appendChild(this.svg);
@@ -143,9 +144,10 @@
   Dial.prototype.angleAt = function (x, y) { var g = this.geom(), fx = x - g.px, fy = y - g.py; return this.orientation === "left" ? Math.atan2(-fy, -fx) : Math.atan2(fx, -fy); };
   Dial.prototype.fracAt = function (x, y) { var g = this.geom(); return Math.hypot(x - g.px, y - g.py) / g.rr; };
   Dial.prototype.valFromLinear = function (y) { var c = this.cfg(), g = this.geom(), yb = g.rect.top + c.linBot * g.sy, yt = g.rect.top + c.linTop * g.sy; return (yb - y) / (yb - yt) * 100; };
-  // Absolute position -> value for the arc dial: map the finger straight onto the
-  // 0%..100% axis (vertical in landscape, horizontal in portrait), exactly like a
-  // plain volume slider. No relative deltas, no velocity, no dead zone near 50%.
+  // Absolute position -> value: maps the finger straight onto the 0%..100% axis
+  // (vertical in landscape, horizontal in portrait). This is NOT used as the value
+  // directly anymore — _move takes the DIFFERENCE of two readings so the drag is
+  // relative to the touch anchor (see _move). Kept as a pure geometry helper.
   Dial.prototype.valFromAxis = function (x, y) {
     var g = this.geom(), p0 = this.pos(0, this.R_FILL), p100 = this.pos(100, this.R_FILL);
     if (this.orientation === "left") {
@@ -155,7 +157,8 @@
     var x0 = g.rect.left + p0.x * g.sx, x1 = g.rect.left + p100.x * g.sx;
     return (x - x0) / ((x1 - x0) || 1) * 100;
   };
-  // One entry point for both modes: wherever the finger is, that's the value.
+  // One entry point for both modes: the absolute axis reading under the finger.
+  // _move differences successive readings to turn this into a relative drag.
   Dial.prototype.valFromPointer = function (x, y) {
     return this.linear() ? this.valFromLinear(y) : this.valFromAxis(x, y);
   };
@@ -190,7 +193,14 @@
       if (e.cancelable) e.preventDefault();   // claim the gesture so touchmove always fires
       var t = (e.touches && e.touches[0]) || e;
       self.dragging = true;
-      self.commit(self.valFromPointer(t.clientX, t.clientY));  // jump to finger, like a slider
+      // Relative gain drag: the first touch is a REFERENCE POINT, not a value. We
+      // remember the current value and the absolute axis reading under the finger;
+      // the value then follows the finger's DELTA from here (see _move). So touching
+      // near 50% no longer snaps the volume to 50% — nothing moves until you drag,
+      // which makes fine-tuning safe (important on headphones).
+      self.anchorVal = self.val;
+      self.anchorAxis = self.valFromPointer(t.clientX, t.clientY);
+      self.dragDelta = 0;
       self.render();
       var move = function (ev) { if (ev.cancelable) ev.preventDefault(); var p = (ev.touches && ev.touches[0]) || ev; self._move(p.clientX, p.clientY); };
       var up = function () {
@@ -204,10 +214,18 @@
     this.svg.addEventListener("mousedown", down);
     this.svg.addEventListener("touchstart", down, { passive: false });
   };
-  // Absolute slider: the value follows the finger's position directly. This
-  // replaces the earlier relative "chord"/tangent drag, which was sensitive to
-  // swipe speed and unreliable near the 50% mark. Behaves like any OS volume slider.
-  Dial.prototype._move = function (x, y) { this.commit(this.valFromPointer(x, y)); };
+  // Relative gain drag: the value changes by however far the finger has moved from
+  // the touch anchor, at the same 1:1 scale a slider would use — but starting from
+  // wherever the value already was. Small moves = fine adjustments; a long swipe = a
+  // big change. This fixes both the "tap-jumps-to-50%" problem of the absolute slider
+  // and the swipe-speed sensitivity of the older velocity/chord model. dragDelta (the
+  // net signed change this gesture) drives the on-dial gain arrow (see render()).
+  Dial.prototype._move = function (x, y) {
+    var cur = this.valFromPointer(x, y);
+    var nv = clamp(this.anchorVal + (cur - this.anchorAxis), 0, 100);
+    this.dragDelta = nv - this.anchorVal;
+    this.commit(nv);
+  };
   Dial.prototype.render = function () {
     var c = this.cfg(), lin = this.linear(), muted = this.muted, dragging = this.dragging;
     var disc = this.target.state === "disconnected";
@@ -234,11 +252,31 @@
     var knobStroke = dragging ? "#ffffff" : (disc || muted ? "#33363e" : accent);
     if (knobR > 0) knob = '<circle cx="' + knobX + '" cy="' + knobY + '" r="' + knobR + '" fill="#0e0f13" stroke="' + knobStroke + '" stroke-width="4"></circle><circle cx="' + knobX + '" cy="' + knobY + '" r="' + Math.max(0, knobR - 8) + '" fill="' + accent + '"></circle>';
 
-    var tag = disc ? "OFFLINE" : muted ? "MUTED" : dragging ? (lin ? "SET" : "GAIN") : "";
-    var tagW = tag.length * 8 + 20;
+    // During a drag the pill becomes a live GAIN read-out: a direction arrow plus the
+    // signed change from where the finger first landed (e.g. "▲ +12"). This is the
+    // visual cue that the dial is RELATIVE — it shows how much you're lifting or
+    // cutting from the reference point, not an absolute target.
+    var tag, tagArrow = "";
+    if (disc) tag = "OFFLINE";
+    else if (muted) tag = "MUTED";
+    else if (dragging) {
+      var dd = Math.round(this.dragDelta);
+      tag = (dd > 0 ? "+" : "") + dd;
+      tagArrow = this.dragDelta > 0.5 ? "up" : this.dragDelta < -0.5 ? "down" : "";
+    } else tag = "";
+    var arrowW = tagArrow ? 15 : 0;
+    var tagW = tag.length * 8 + 20 + arrowW;
     var tagBg = dragging && !muted && !disc ? "rgba(255,255,255,0.14)" : (disc || muted ? "#2a1416" : "rgba(255,255,255,0.06)");
     var tagFg = dragging && !muted && !disc ? "#ffffff" : (disc || muted ? "#e07a7a" : "#c9cdd6");
-    var tagSvg = tag ? '<rect x="' + (c.srcX - tagW / 2) + '" y="' + c.tagY + '" width="' + tagW + '" height="20" rx="10" fill="' + tagBg + '"></rect><text x="' + c.srcX + '" y="' + (c.tagY + 14) + '" text-anchor="middle" font-size="10" font-weight="800" fill="' + tagFg + '" letter-spacing="1">' + tag + "</text>" : "";
+    var arrowSvg = "";
+    if (tagArrow) {
+      var ax = c.srcX - tagW / 2 + 11, ay = c.tagY + 10;   // arrow sits at the pill's left
+      arrowSvg = tagArrow === "up"
+        ? '<path d="M ' + ax + ' ' + (ay + 4) + ' L ' + (ax + 4.5) + ' ' + (ay - 5) + ' L ' + (ax + 9) + ' ' + (ay + 4) + ' Z" fill="' + tagFg + '"></path>'
+        : '<path d="M ' + ax + ' ' + (ay - 4) + ' L ' + (ax + 4.5) + ' ' + (ay + 5) + ' L ' + (ax + 9) + ' ' + (ay - 4) + ' Z" fill="' + tagFg + '"></path>';
+    }
+    var tagTextX = c.srcX + arrowW / 2;   // shift text right to clear the arrow
+    var tagSvg = tag ? '<rect x="' + (c.srcX - tagW / 2) + '" y="' + c.tagY + '" width="' + tagW + '" height="20" rx="10" fill="' + tagBg + '"></rect>' + arrowSvg + '<text x="' + tagTextX + '" y="' + (c.tagY + 14) + '" text-anchor="middle" font-size="10" font-weight="800" fill="' + tagFg + '" letter-spacing="1">' + tag + "</text>" : "";
 
     var muteBg = muted ? "#3a1d20" : "#101116", muteBorder = muted ? "#5a2b2f" : "#2c2f37";
     var muteIcon = disc ? "#4a4d55" : (muted ? "#f2b5b5" : accent);
@@ -287,6 +325,7 @@
     selectedId: null, dialMode: "app", page: 0,
   };
   var ws = null, reconnectDelay = 500, pingTimer = null, pingSentAt = 0;
+  var _lostNotified = false;   // fired the native "connection lost" hook once per outage
   // QR pairing: the scanned URL carries ?pair=CODE, so we auto-pair on connect
   // instead of making the user type it. Falls back to the keypad if it fails.
   var urlPairCode = (function () { var m = location.search.match(/[?&]pair=([^&]+)/); return m ? decodeURIComponent(m[1]) : null; })();
@@ -303,6 +342,15 @@
   // localStorage as before. The server authenticates by token alone (find_by_token),
   // so the same token works on any origin.
   function nativeBridge() { try { return window.AndroidBridge || null; } catch (e) { return null; } }
+  // Tell the native shell the PC became unreachable (e.g. the USB cable was pulled).
+  // The page keeps retrying, but the shell can offer to persist the session over
+  // Wi-Fi if the PC is still on the LAN. Fires once per outage; reset on reconnect.
+  function notifyNativeLost() {
+    if (_lostNotified) return;
+    _lostNotified = true;
+    var b = nativeBridge();
+    if (b && b.connectionLost) { try { b.connectionLost(location.origin); } catch (e) {} }
+  }
   function deviceId() {
     var b = nativeBridge();
     if (b && b.getDeviceId) { try { var nid = b.getDeviceId(); if (nid) return nid; } catch (e) {} }
@@ -478,10 +526,10 @@
     model.connection = state;
     var dot = $("conn-dot"), text = $("conn-text"), banner = $("banner");
     dot.className = "conn-dot" + (state === "reconnecting" ? " warn" : state === "disconnected" ? " err" : "");
-    if (state === "connected") { text.textContent = model.latency != null ? "Connected · " + model.latency + "ms" : "Connected"; text.style.color = "var(--green-txt)"; banner.className = "banner hidden"; }
+    if (state === "connected") { text.textContent = model.latency != null ? "Connected · " + model.latency + "ms" : "Connected"; text.style.color = "var(--green-txt)"; banner.className = "banner hidden"; _lostNotified = false; }
     else if (state === "connecting") { text.textContent = "connecting…"; text.style.color = "var(--sub)"; banner.className = "banner hidden"; }
     else if (state === "reconnecting") { text.textContent = "Reconnecting…"; text.style.color = "#ffcf88"; banner.className = "banner reconnecting"; banner.innerHTML = '<span class="b-dot"></span><div><div class="b-title">Reconnecting…</div><div class="b-sub">Lost the PC · controls paused</div></div><span class="b-right">' + model.retry + " / ∞</span>"; }
-    else { text.textContent = "Disconnected"; text.style.color = "var(--red-tint)"; banner.className = "banner disconnected"; banner.innerHTML = '<span class="b-dot"></span><div><div class="b-title">Disconnected</div><div class="b-sub">Can’t reach the PC · is the desktop app running?</div></div>'; }
+    else { text.textContent = "Disconnected"; text.style.color = "var(--red-tint)"; banner.className = "banner disconnected"; banner.innerHTML = '<span class="b-dot"></span><div><div class="b-title">Disconnected</div><div class="b-sub">Can’t reach the PC · is the desktop app running?</div></div>'; notifyNativeLost(); }
     if (dial) dial.setTarget(targetForDial());
     updateMediaConn();
   }

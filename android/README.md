@@ -3,8 +3,7 @@
 A thin **native WebView shell** around the web control surface in [`../web/`](../web).
 It gives the phone a home-screen app, guaranteed fullscreen, a hard landscape lock,
 keep-awake, native QR-scan pairing, mDNS auto-discovery, and a pinned secure
-connection — things a plain browser tab can't. The full spec is
-[`../docs/android-brief.md`](../docs/android-brief.md).
+connection — things a plain browser tab can't.
 
 ## Connection
 

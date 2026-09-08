@@ -4,7 +4,7 @@
  * on reload (the agent is local — fresh is effectively free); the cache is the
  * offline fallback. The WebSocket is never cached — it always goes to the agent.
  */
-var CACHE = "streamctl-shell-v20";
+var CACHE = "streamctl-shell-v22";
 var SHELL = [
   "/",
   "/static/app.js",
