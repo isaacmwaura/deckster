@@ -328,6 +328,7 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .soundboard-setup label{display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:10px;font-weight:800;letter-spacing:.35px;color:var(--sub);}
 .soundboard-setup select{width:100%;min-height:34px;border-radius:8px;border:1px solid var(--line3);padding:0 8px;background:#0d0f14;color:var(--ink2);font:inherit;font-size:11px;}
 .soundboard-save{width:100%;margin-top:5px;padding:10px;border-radius:10px;background:#b38cff;color:#160d28;font-size:12px;font-weight:850;}
+.soundboard-restore{width:100%;margin-top:8px;padding:9px;border-radius:10px;background:var(--card2);border:1px solid var(--line3);color:var(--ink2);font-size:11px;font-weight:800;}
 .soundboard-error{color:#f19ba1!important;margin:9px 0 0!important;min-height:14px;}
 .soundboard-pads-wrap{display:flex;flex-direction:column;min-width:0;flex:1;}
 .soundboard-pads-head{flex:none;display:flex;justify-content:space-between;gap:10px;margin:2px 2px 9px;font-size:10px;font-weight:850;letter-spacing:1px;color:var(--muted);}

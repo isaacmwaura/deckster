@@ -44,7 +44,7 @@ import com.streamcontrol.shell.ui.ErrorScreen
 private val BG = Color(0xFF0B0E14)
 
 /**
- * Thin native shell around the web control surface (see docs/android-brief.md).
+ * Thin native shell around the web control surface.
  * Compose hosts a native Connect screen (USB probe -> mDNS discovery / QR / manual)
  * and, once a URL is chosen, a fullscreen WebView. The activity is landscape-locked in
  * the manifest; here it adds immersive fullscreen and keep-awake.

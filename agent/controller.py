@@ -127,6 +127,8 @@ class Controller:
                 await self._soundboard_update_clip(client, msg)
             elif t == "soundboard_remove_clip":
                 await self._soundboard_remove_clip(client, msg)
+            elif t == "soundboard_restore_defaults":
+                await self._soundboard_restore_defaults(client)
             else:
                 await client.send({"t": "error", "code": "unimpl", "msg": f"no handler for {t!r}"})
         except Exception as exc:  # noqa: BLE001 - report, never crash the socket
@@ -285,6 +287,13 @@ class Controller:
             return
         if not self._soundboard.remove_clip(str(msg.get("clipId", ""))):
             raise ValueError("unknown soundboard clip")
+        self._publish_soundboard()
+
+    async def _soundboard_restore_defaults(self, client: Client) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        self._soundboard.restore_defaults(reset=True)
         self._publish_soundboard()
 
     async def _set_default_device(self, msg: dict[str, Any], flow: str) -> None:

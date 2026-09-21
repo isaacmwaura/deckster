@@ -30,7 +30,9 @@ install a thin native app (below); any other phone just opens it in the browser.
   the browser tab that's playing.
 - **Game-agnostic soundboard** — import clips on the PC, then trigger them from the
   phone with per-pad gain and separate **Voice** (call/game) and **Ears** (monitor)
-  routes. Multiple clips can play at once and **Stop all** silences them immediately.
+  routes. It starts with 12 removable CC0 sounds, including crickets, rimshot,
+  applause, air horn, and censor bleep. Multiple clips can play at once and
+  **Stop all** silences them immediately.
 - **Rearrange your app tiles** — long‑press and drag, like an Android home screen.
 - **Made for a wall/desk mount** — fullscreen, landscape‑locked, screen stays awake,
   with an OLED burn‑in guard.
@@ -108,7 +110,8 @@ integration. Windows needs a virtual audio endpoint for this; the current releas
 
 1. Install VB-CABLE, then restart Windows if its installer asks you to.
 2. In the Deckster PC control panel, open **Soundboard** and import WAV, MP3, OGG, or
-   FLAC clips.
+   FLAC clips. Deckster installs 12 starter sounds automatically; **Restore 12 starter
+   sounds** brings them back without touching your own imports.
 3. On the phone's soundboard page, choose your physical microphone and select
    **CABLE Input** as the **Voice** output. Optionally select your headphones/speakers
    for **Ears** monitoring.
@@ -116,6 +119,8 @@ integration. Windows needs a virtual audio endpoint for this; the current releas
 
 Your clip assignments, gain, routing, selected endpoints, and navigation layout persist
 across restarts. Layout A puts Soundboard above Mixer; Layout B puts it to the left.
+The starter pack is CC0/public-domain and its complete provenance, source hashes, and
+per-file hashes live in [`assets/default-sounds/`](assets/default-sounds/).
 
 ### At a glance
 

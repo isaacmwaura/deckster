@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "license": "CC0-1.0",
+  "clips": [
+    {
+      "key": "crickets",
+      "file": "crickets.wav",
+      "label": "Crickets",
+      "emoji": "\ud83e\udd97",
+      "voice": true,
+      "ears": true,
+      "gain": 0.82,
+      "sha256": "4986bd7e76a7114a25564a5cb137d11a62afcfd54b7f892c0e79acf0b0c625b3"
+    },
+    {
+      "key": "rimshot",
+      "file": "rimshot.wav",
+      "label": "Rimshot",
+      "emoji": "\ud83e\udd41",
+      "voice": true,
+      "ears": true,
+      "gain": 0.82,
+      "sha256": "87f2b0692e47d83a1531b669eeeb7382568f5c5ca17c199a45fd6770d6342931"
+    },
+    {
+      "key": "applause",
+      "file": "applause.wav",
+      "label": "Applause",
+      "emoji": "\ud83d\udc4f",
+      "voice": true,
+      "ears": true,
+      "gain": 0.72,
+      "sha256": "a198e24b313d7f0896973bf2a95b945a3d74a0f50dad06210ec0cf5883b17304"
+    },
+    {
+      "key": "air-horn",
+      "file": "air-horn.wav",
+      "label": "Air horn",
+      "emoji": "\ud83d\udce3",
+      "voice": true,
+      "ears": true,
+      "gain": 0.68,
+      "sha256": "80539796f3789192a565415bd1fb432475af9ad75c58a46fa634a150034b83ca"
+    },
+    {
+      "key": "sad-trombone",
+      "file": "sad-trombone.wav",
+      "label": "Sad trombone",
+      "emoji": "\ud83c\udfba",
+      "voice": true,
+      "ears": true,
+      "gain": 0.78,
+      "sha256": "625a027c26fca747c0fabe013afb6f5416032f9555ac6293450627e8f4f53733"
+    },
+    {
+      "key": "record-scratch",
+      "file": "record-scratch.wav",
+      "label": "Record scratch",
+      "emoji": "\ud83d\udcbf",
+      "voice": true,
+      "ears": true,
+      "gain": 0.82,
+      "sha256": "2b1e06cec2a2bb0dd41e60a41dba637d6cc86cb76fccdff5f3305d86b344b7d4"
+    },
+    {
+      "key": "drum-roll",
+      "file": "drum-roll.wav",
+      "label": "Drum roll",
+      "emoji": "\ud83e\udd41",
+      "voice": true,
+      "ears": true,
+      "gain": 0.78,
+      "sha256": "bb1b4e265405e0c3ae60112630c964ef7d122a133b0dfc5d98906232594c5b98"
+    },
+    {
+      "key": "censor-bleep",
+      "file": "censor-bleep.wav",
+      "label": "Censor bleep",
+      "emoji": "\ud83e\udd10",
+      "voice": true,
+      "ears": true,
+      "gain": 0.55,
+      "sha256": "699c4891bd1198724de0e44482c9700e32e743f1f0efb9d12e3e4dd715dcdf44"
+    },
+    {
+      "key": "success",
+      "file": "success.wav",
+      "label": "Success",
+      "emoji": "\u2705",
+      "voice": true,
+      "ears": true,
+      "gain": 0.78,
+      "sha256": "d6df98d21d39ce3224ce59cfd0d19c2c07da6fb07d27d6a67f577657c0531b73"
+    },
+    {
+      "key": "wrong",
+      "file": "wrong.wav",
+      "label": "Wrong answer",
+      "emoji": "\u274c",
+      "voice": true,
+      "ears": true,
+      "gain": 0.76,
+      "sha256": "8fe43ffb9d9bc76dba616520f78dbf1ce8cc05d615d25225aa77134b2082e3b1"
+    },
+    {
+      "key": "bell",
+      "file": "bell.wav",
+      "label": "Bell",
+      "emoji": "\ud83d\udd14",
+      "voice": true,
+      "ears": true,
+      "gain": 0.76,
+      "sha256": "ec8b9a54297146818c23949404135b2e91c8d49be5e0ae52225166f83dfc46ae"
+    },
+    {
+      "key": "pop",
+      "file": "pop.wav",
+      "label": "Pop",
+      "emoji": "\ud83e\udee7",
+      "voice": true,
+      "ears": true,
+      "gain": 0.82,
+      "sha256": "81ba0ba308ab2b1de20ddf0038c04b6e2aa6a6e3929c54cc74f838f75794f13a"
+    }
+  ]
+}

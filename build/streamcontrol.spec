@@ -19,7 +19,10 @@ hiddenimports = []
 for pkg in ("comtypes", "pycaw", "aiohttp", "pystray", "PIL", "qrcode", "sounddevice", "soundfile"):
     hiddenimports += collect_submodules(pkg)
 
-datas = [(os.path.join(ROOT, "web"), "web")]
+datas = [
+    (os.path.join(ROOT, "web"), "web"),
+    (os.path.join(ROOT, "assets", "default-sounds"), os.path.join("assets", "default-sounds")),
+]
 _bin = os.path.join(ROOT, "bin")
 if os.path.isdir(_bin) and any(os.scandir(_bin)):
     datas.append((_bin, "bin"))

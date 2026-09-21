@@ -13,6 +13,8 @@ explicit in the phone UI instead of failing at startup.
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import shutil
 import threading
 import uuid
@@ -20,11 +22,13 @@ import wave
 from pathlib import Path
 from typing import Any, Callable
 
+from .config import resource_root
 from .log import get_logger
 
 log = get_logger("soundboard")
 
 SUPPORTED_EXTENSIONS = frozenset({".wav", ".flac", ".ogg", ".mp3"})
+DEFAULT_PACK_DIR = Path("assets") / "default-sounds"
 
 
 def _clamp(value: object, low: float = 0.0, high: float = 1.0) -> float:
@@ -209,7 +213,8 @@ class SoundboardRenderer:
 class SoundboardService:
     """Owns the on-disk pad library, selected endpoint IDs, and mixer lifecycle."""
 
-    def __init__(self, root: Path, renderer_factory=SoundboardRenderer) -> None:
+    def __init__(self, root: Path, renderer_factory=SoundboardRenderer,
+                 defaults_root: Path | None = None) -> None:
         self.root = root
         self.clips_dir = root / "soundboard"
         self.clips_dir.mkdir(parents=True, exist_ok=True)
@@ -220,10 +225,13 @@ class SoundboardService:
         self._error = ""
         self._playing: set[str] = set()
         self._autostart_attempted = False
+        self.defaults_root = defaults_root or (resource_root() / DEFAULT_PACK_DIR)
         self._data = self._load()
+        self._install_default_pack_once()
 
     def _load(self) -> dict[str, Any]:
-        default = {"version": 1, "config": {"inputId": "", "voiceOutputId": "",
+        default = {"version": 1, "defaultPackVersion": 0,
+                   "config": {"inputId": "", "voiceOutputId": "",
                    "earsOutputId": "", "layout": "a"}, "clips": []}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
@@ -241,6 +249,85 @@ class SoundboardService:
         tmp = self._path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
         tmp.replace(self._path)
+
+    def _default_manifest(self) -> dict[str, Any]:
+        """Read and verify the bundled CC0 pack before copying any file."""
+        manifest_path = self.defaults_root / "manifest.json"
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("clips"), list):
+            raise ValueError("default sound manifest is invalid")
+        version = data.get("version")
+        if not isinstance(version, int) or version < 1:
+            raise ValueError("default sound manifest has no valid version")
+        seen: set[str] = set()
+        for clip in data["clips"]:
+            if not isinstance(clip, dict):
+                raise ValueError("default sound entry is invalid")
+            key = str(clip.get("key", ""))
+            filename = str(clip.get("file", ""))
+            if (not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", key) or key in seen or
+                    Path(filename).name != filename or
+                    Path(filename).suffix.lower() not in SUPPORTED_EXTENSIONS):
+                raise ValueError("default sound entry has an unsafe key or filename")
+            source = self.defaults_root / filename
+            expected = str(clip.get("sha256", "")).lower()
+            actual = hashlib.sha256(source.read_bytes()).hexdigest()
+            if len(expected) != 64 or actual != expected:
+                raise ValueError(f"default sound failed integrity check: {filename}")
+            seen.add(key)
+        return data
+
+    def _install_default_pack_once(self) -> None:
+        """Install a new bundled pack once without resurrecting deleted pads."""
+        try:
+            manifest = self._default_manifest()
+            if int(self._data.get("defaultPackVersion", 0)) < manifest["version"]:
+                self.restore_defaults(reset=True, manifest=manifest)
+        except FileNotFoundError:
+            log.info("no bundled default sound pack found")
+        except Exception as exc:  # noqa: BLE001 - custom clips must still remain usable
+            log.warning("default sound pack was not installed: %s", exc)
+
+    def restore_defaults(self, reset: bool = True,
+                         manifest: dict[str, Any] | None = None) -> int:
+        """Restore verified starter pads while preserving every user-imported clip."""
+        manifest = manifest or self._default_manifest()
+        if reset:
+            self.stop_all()
+        with self._lock:
+            old_defaults = [c for c in self._data["clips"] if c.get("defaultKey")]
+            custom = [c for c in self._data["clips"] if not c.get("defaultKey")]
+            current = {str(c.get("defaultKey")): c for c in old_defaults}
+            installed: list[dict[str, Any]] = []
+            for entry in manifest["clips"]:
+                key = str(entry["key"])
+                existing = current.get(key)
+                if existing is not None and not reset:
+                    installed.append(existing)
+                    continue
+                source = self.defaults_root / str(entry["file"])
+                destination_name = f"default-{key}{source.suffix.lower()}"
+                shutil.copy2(source, self.clips_dir / destination_name)
+                installed.append({
+                    "id": f"default-{key}", "defaultKey": key,
+                    "file": destination_name, "label": str(entry.get("label", key))[:48],
+                    "emoji": str(entry.get("emoji", "♪"))[:48],
+                    "voice": bool(entry.get("voice", True)),
+                    "ears": bool(entry.get("ears", True)),
+                    "gain": _clamp(entry.get("gain", 1.0)),
+                })
+            valid_files = {str(c["file"]) for c in installed}
+            for clip in old_defaults:
+                filename = str(clip.get("file", ""))
+                if filename and filename not in valid_files:
+                    try:
+                        (self.clips_dir / filename).unlink(missing_ok=True)
+                    except OSError:
+                        log.warning("could not remove retired default sound %s", filename)
+            self._data["clips"] = installed + custom
+            self._data["defaultPackVersion"] = int(manifest["version"])
+            self._save()
+            return len(installed)
 
     def snapshot(self, outputs: list[dict[str, Any]] | None = None,
                  inputs: list[dict[str, Any]] | None = None) -> dict[str, Any]:

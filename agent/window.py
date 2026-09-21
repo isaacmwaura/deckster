@@ -422,6 +422,10 @@ class DecksterWindow:
                    width=150, height=34, bg=CARD, radius=9).pack(side="left")
         PillButton(actions, "Remove selected", self._remove_soundboard_clip, kind="danger",
                    width=142, height=34, bg=CARD, radius=9).pack(side="right")
+        defaults = tk.Frame(card, bg=CARD)
+        defaults.pack(fill="x", padx=10, pady=(0, 10))
+        PillButton(defaults, "Restore 12 starter sounds", self._restore_soundboard_defaults,
+                   width=190, height=32, bg=CARD, radius=9).pack(side="left")
         self.soundboard_note = tk.Label(
             f, text="Pads and Voice/Ears routing are configured from the phone. Clips are copied into Deckster's data folder.",
             bg=BG, fg=SUB, font=("Segoe UI", 8), justify="left", anchor="w", wraplength=420,
@@ -501,6 +505,11 @@ class DecksterWindow:
         if sel and sel[0] < len(self._soundboard_clip_ids):
             try: self.soundboard.remove_clip(self._soundboard_clip_ids[sel[0]])
             except Exception: log.exception("remove soundboard clip")
+    def _restore_soundboard_defaults(self):
+        if self.soundboard is None:
+            return
+        try: self.soundboard.restore_defaults(reset=True)
+        except Exception: log.exception("restore default soundboard clips")
 
     def _hide(self):
         self.root.withdraw()

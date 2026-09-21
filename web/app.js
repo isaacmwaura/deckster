@@ -1001,6 +1001,10 @@
     }});
     buzz(HAPTIC.tap); nudgeActivity();
   }
+  function restoreSoundboardDefaults() {
+    if (!window.confirm("Restore Deckster's 12 starter sounds? Your imported clips will be kept.")) return;
+    send({ t: "soundboard_restore_defaults" }); buzz(HAPTIC.tap); nudgeActivity();
+  }
   function openSoundboard() {
     if (model.soundboardOpen || !model.paired) return;
     model.soundboardOpen = true;
@@ -1265,6 +1269,7 @@
     if ($("soundboard-back")) $("soundboard-back").onclick = closeSoundboard;
     if ($("soundboard-stop")) $("soundboard-stop").onclick = function () { send({ t: "soundboard_stop_all" }); buzz(HAPTIC.mute); nudgeActivity(); };
     if ($("soundboard-save")) $("soundboard-save").onclick = saveSoundboardConfig;
+    if ($("soundboard-restore")) $("soundboard-restore").onclick = restoreSoundboardDefaults;
     if ($("soundboard-edit-save")) $("soundboard-edit-save").onclick = saveSoundboardEditor;
     if ($("soundboard-edit-delete")) $("soundboard-edit-delete").onclick = deleteSoundboardClip;
     if ($("soundboard-edit-cancel")) $("soundboard-edit-cancel").onclick = closeSoundboardEditor;

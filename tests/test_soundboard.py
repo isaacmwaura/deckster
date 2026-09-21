@@ -7,6 +7,7 @@ device-id/configuration and polyphonic trigger contract used by the controller.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import struct
 import wave
 
@@ -58,7 +59,9 @@ def test_soundboard_library_config_and_play(tmp_path):
         renderer = RecordingRenderer(); made.append(renderer); return renderer
 
     source = tmp_path / "airhorn.wav"; _wav(source)
-    service = SoundboardService(tmp_path / "data", renderer_factory=factory)
+    no_defaults = tmp_path / "no-defaults"
+    service = SoundboardService(tmp_path / "data", renderer_factory=factory,
+                                defaults_root=no_defaults)
     clip = service.import_clip(source, label="Air horn", voice=True, ears=True, gain=.7)
     inputs = [{"id": "mic", "name": "Headset Mic"}]
     outputs = [{"id": "cable", "name": "CABLE Input"}, {"id": "ears", "name": "Headphones"}]
@@ -72,7 +75,8 @@ def test_soundboard_library_config_and_play(tmp_path):
 
     # The on-disk library survives a service restart and retains per-pad settings.
     service.update_clip(clip["id"], label="Horn", gain=2, voice=False)
-    restored = SoundboardService(tmp_path / "data", renderer_factory=factory)
+    restored = SoundboardService(tmp_path / "data", renderer_factory=factory,
+                                 defaults_root=no_defaults)
     saved = restored.snapshot()["clips"][0]
     assert saved["label"] == "Horn" and saved["gain"] == 1 and saved["voice"] is False
     restored.ensure_started(outputs, inputs)
@@ -87,7 +91,8 @@ def test_soundboard_controller_config_and_stop(tmp_path):
     async def body():
         source = tmp_path / "clip.wav"; _wav(source)
         renderer = RecordingRenderer()
-        service = SoundboardService(tmp_path / "data", renderer_factory=lambda: renderer)
+        service = SoundboardService(tmp_path / "data", renderer_factory=lambda: renderer,
+                                    defaults_root=tmp_path / "no-defaults")
         clip = service.import_clip(source)
         async with engine_client(soundboard=service) as (client, _state, _controller):
             ws = await client.ws_connect("/ws"); await hello(ws)
@@ -103,3 +108,44 @@ def test_soundboard_controller_config_and_stop(tmp_path):
             assert renderer.stopped is True
             await ws.close()
     run(body())
+
+
+def test_cc0_starter_pack_installs_once_and_can_be_restored(tmp_path):
+    pack = Path(__file__).resolve().parents[1] / "assets" / "default-sounds"
+    service = SoundboardService(tmp_path / "data", defaults_root=pack)
+    clips = service.snapshot()["clips"]
+    assert len(clips) == 12
+    assert {clip["id"] for clip in clips} >= {
+        "default-crickets", "default-rimshot", "default-applause", "default-air-horn",
+    }
+    assert all((tmp_path / "data" / "soundboard" / clip["file"]).is_file() for clip in clips)
+
+    # Removing a default is a lasting user choice; startup does not resurrect it.
+    assert service.remove_clip("default-crickets")
+    custom_source = tmp_path / "mine.wav"; _wav(custom_source)
+    custom = service.import_clip(custom_source, label="Mine")
+    restarted = SoundboardService(tmp_path / "data", defaults_root=pack)
+    assert "default-crickets" not in {clip["id"] for clip in restarted.snapshot()["clips"]}
+
+    # Explicit restore resets the starter pack while preserving imported clips.
+    assert restarted.restore_defaults(reset=True) == 12
+    restored = restarted.snapshot()["clips"]
+    assert len(restored) == 13
+    assert custom["id"] in {clip["id"] for clip in restored}
+
+
+def test_cc0_starter_pack_hashes_are_verified(tmp_path):
+    pack = Path(__file__).resolve().parents[1] / "assets" / "default-sounds"
+    copied = tmp_path / "pack"
+    import shutil
+    shutil.copytree(pack, copied)
+    with (copied / "crickets.wav").open("ab") as damaged:
+        damaged.write(b"tampered")
+    service = SoundboardService(tmp_path / "data", defaults_root=copied)
+    assert service.snapshot()["clips"] == []
+    try:
+        service.restore_defaults()
+    except ValueError as exc:
+        assert "integrity check" in str(exc)
+    else:
+        raise AssertionError("tampered default sound was accepted")
