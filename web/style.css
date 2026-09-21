@@ -308,6 +308,38 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .media-empty-t{font-size:16px;font-weight:800;color:var(--ink2);}
 .media-empty-s{font-size:13px;color:var(--muted);max-width:280px;}
 
+/* ---- Soundboard (Configuration B: a shared virtual microphone) ---- */
+.soundboard{position:fixed;inset:0;z-index:72;pointer-events:none;}
+.soundboard.open{pointer-events:auto;}
+.soundboard-sheet{position:absolute;inset:0;display:flex;flex-direction:column;background:#0b0c10;
+  transform:translateY(-100%);transition:transform .34s cubic-bezier(.2,.8,.2,1);}
+.soundboard.open .soundboard-sheet{transform:translateY(0);}
+.soundboard.layout-b .soundboard-sheet{transform:translateX(-100%);}
+.soundboard.layout-b.open .soundboard-sheet{transform:translateX(0);}
+.soundboard-topbar{flex:none;display:flex;align-items:center;gap:12px;padding:calc(10px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 10px calc(16px + env(safe-area-inset-left));border-bottom:1px solid var(--line);}
+.soundboard-back{display:flex;align-items:center;gap:4px;padding:8px 9px;border-radius:10px;color:var(--ink2);font-size:13px;font-weight:800;background:var(--card2);border:1px solid var(--line2);}
+.soundboard-title{font-size:15px;font-weight:850;color:var(--ink);}
+.soundboard-status{font-size:10px;font-weight:650;color:var(--muted);margin-top:1px;}
+.soundboard-stop{margin-left:auto;padding:9px 12px;border-radius:10px;background:#3a171b;border:1px solid #6b2b32;color:#ffb1b7;font-size:12px;font-weight:850;}
+.soundboard-body{min-height:0;flex:1;display:flex;gap:13px;padding:14px 16px calc(14px + env(safe-area-inset-bottom));}
+.soundboard-setup{width:min(285px,34%);flex:none;overflow:auto;padding:14px;border-radius:15px;background:var(--card);border:1px solid var(--line2);}
+.soundboard-setup-title{font-size:11px;font-weight:850;letter-spacing:1px;color:#c6a5ff;margin-bottom:7px;}
+.soundboard-setup p{font-size:11px;line-height:1.42;color:var(--sub);margin-bottom:12px;}
+.soundboard-setup label{display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:10px;font-weight:800;letter-spacing:.35px;color:var(--sub);}
+.soundboard-setup select{width:100%;min-height:34px;border-radius:8px;border:1px solid var(--line3);padding:0 8px;background:#0d0f14;color:var(--ink2);font:inherit;font-size:11px;}
+.soundboard-save{width:100%;margin-top:5px;padding:10px;border-radius:10px;background:#b38cff;color:#160d28;font-size:12px;font-weight:850;}
+.soundboard-error{color:#f19ba1!important;margin:9px 0 0!important;min-height:14px;}
+.soundboard-pads-wrap{display:flex;flex-direction:column;min-width:0;flex:1;}
+.soundboard-pads-head{flex:none;display:flex;justify-content:space-between;gap:10px;margin:2px 2px 9px;font-size:10px;font-weight:850;letter-spacing:1px;color:var(--muted);}
+#soundboard-pad-hint{letter-spacing:0;font-weight:650;text-align:right;}
+.soundboard-pads{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(4,minmax(100px,1fr));grid-auto-rows:minmax(92px,1fr);gap:10px;align-content:start;}
+.sound-pad{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;padding:11px;border-radius:14px;background:var(--card);border:1px solid var(--line2);text-align:left;}
+.sound-pad:hover{border-color:#644998;background:#191521;}.sound-pad.playing{border-color:#8a65d8;box-shadow:inset 0 0 0 1px #8a65d8;}
+.sound-pad-emoji{font-size:22px;line-height:1;}.sound-pad-name{font-size:12px;font-weight:800;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+.sound-pad-buses{display:flex;gap:4px;}.sound-pad-bus{padding:2px 4px;border-radius:4px;border:1px solid #2c3f34;color:#6be89a;font-size:8px;font-weight:850;letter-spacing:.4px;}.sound-pad-bus.ears{border-color:#273a50;color:#78bfff;}
+.soundboard-empty{grid-column:1/-1;min-height:160px;border:1px dashed var(--line3);border-radius:15px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;color:var(--muted);padding:20px;}.soundboard-empty b{color:var(--ink2);font-size:14px;}
+.soundboard-editor{position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(5,6,8,.76);}.soundboard-editor-card{width:min(380px,100%);padding:18px;border-radius:16px;background:#15171d;border:1px solid var(--line3);box-shadow:0 18px 44px rgba(0,0,0,.5);}.soundboard-editor-card h2{font-size:16px;margin-bottom:14px;}.soundboard-editor-card>label{display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:10px;font-weight:800;color:var(--sub);letter-spacing:.5px;}.soundboard-editor-card input[type="text"],.soundboard-editor-card input:not([type]){height:38px;padding:0 10px;border-radius:9px;border:1px solid var(--line3);background:#0d0f14;color:var(--ink);font:inherit;}.soundboard-editor-card input[type="range"]{accent-color:#b38cff;}.soundboard-routes{display:flex;gap:18px;margin:14px 0;font-size:12px;font-weight:750;color:var(--ink2);}.soundboard-routes label{display:flex;align-items:center;gap:6px;}.soundboard-editor-actions{display:flex;align-items:center;gap:8px;margin-top:16px;}.soundboard-editor-actions button{padding:9px 12px;border-radius:9px;background:var(--card2);border:1px solid var(--line3);font-size:12px;font-weight:800;}.soundboard-editor-actions .soundboard-save{border:none;color:#160d28;}.soundboard-editor-actions .soundboard-edit-delete{color:#ffadb3;border-color:#5d2a30;background:#321619;}
+
 @keyframes scpulse{0%,100%{opacity:1;}50%{opacity:.3;}}
 
 /* ---- portrait fallback: stack the mixer ---- */
@@ -327,6 +359,9 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
   .dev-cols{flex-direction:column;overflow-y:auto;}
   .dev-col{overflow:visible;}
   .tile-pct{font-size:22px;}
+  .soundboard-body{flex-direction:column;overflow-y:auto;}
+  .soundboard-setup{width:auto;overflow:visible;}.soundboard-pads-wrap{min-height:240px;flex:1;}
+  .soundboard-pads{grid-template-columns:repeat(3,minmax(80px,1fr));grid-auto-rows:100px;overflow:visible;}
 }
 
 /* ---- tablet: more breathing room ---- */

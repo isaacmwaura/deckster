@@ -2,7 +2,7 @@
 
 The macro path presses a key combination that the *target app already listens for*
 — e.g. Discord's global "toggle mute" hotkey — so it reaches app-internal actions
-the audio API cannot (BUILD-PLAN.md P3, HTML 5.3).
+the audio API cannot.
 
 We send **scancode** events (KEYEVENTF_SCANCODE): Windows still translates them to a
 virtual key for foreground apps and OS hotkeys, but scancodes also survive into

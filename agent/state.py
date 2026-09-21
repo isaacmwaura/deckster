@@ -1,7 +1,7 @@
 """Canonical in-memory state plus a pub/sub fan-out to WebSocket clients.
 
 State lives here as the single source of truth. The server diffs updates and
-pushes them to every authed client. The audio engine (P1) writes here; clients
+pushes them to every authed client. The audio engine writes here; clients
 read a snapshot on subscribe and receive incremental `state` messages after.
 
 Design notes:
@@ -35,6 +35,12 @@ class AppState:
         self.app_bindings: dict[str, dict[str, Any]] = {}
         # now-playing media sessions (SMTC); see media.MediaService
         self.media: list[dict[str, Any]] = []
+        # Soundboard pads and routing configuration live independently from the
+        # normal system default-device state.
+        self.soundboard: dict[str, Any] = {
+            "clips": [], "config": {}, "configured": False,
+            "runtime": "setup_required", "error": "", "outputs": [], "inputs": [],
+        }
         self._subscribers: set[asyncio.Queue] = set()
 
     # ---- subscription plumbing -------------------------------------------
@@ -68,6 +74,7 @@ class AppState:
             "macros": self.macros,
             "appInputBindings": self.app_bindings,
             "media": self.media,
+            "soundboard": self.soundboard,
         }
 
     # ---- mutations (called on the event loop thread) ----------------------
@@ -127,6 +134,10 @@ class AppState:
         self.media = media
         # A dedicated message keeps the ~1.5s media poll off the full snapshot path.
         self._broadcast({"t": "media", "media": media})
+
+    def set_soundboard(self, soundboard: dict[str, Any]) -> None:
+        self.soundboard = soundboard
+        self._broadcast({"t": "soundboard", "soundboard": soundboard})
 
     def ingest_full(self, sessions: list[dict[str, Any]], speaker: dict[str, Any],
                     mic: dict[str, Any], outputs: list[dict], inputs: list[dict],

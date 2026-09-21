@@ -1,6 +1,6 @@
 """AudioEngine: a single dedicated thread that owns COM and serialises all audio.
 
-Why a dedicated thread (BUILD-PLAN.md challenge 1): pycaw sits on Windows COM,
+Why a dedicated thread: pycaw sits on Windows COM,
 which is apartment-threaded. Initialising COM once here and funnelling every audio
 call through this one thread avoids the intermittent failures that come from
 calling COM objects across threads.

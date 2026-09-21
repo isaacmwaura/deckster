@@ -10,9 +10,13 @@ import os
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = os.path.abspath(os.getcwd())
+version_ns = {}
+with open(os.path.join(ROOT, "agent", "__init__.py"), encoding="utf-8") as version_file:
+    exec(version_file.read(), version_ns)
+VERSION = version_ns["__version__"]
 
 hiddenimports = []
-for pkg in ("comtypes", "pycaw", "aiohttp", "pystray", "PIL", "qrcode"):
+for pkg in ("comtypes", "pycaw", "aiohttp", "pystray", "PIL", "qrcode", "sounddevice", "soundfile"):
     hiddenimports += collect_submodules(pkg)
 
 datas = [(os.path.join(ROOT, "web"), "web")]
@@ -40,7 +44,8 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="Deckster",
+    # Every local build has an immediately identifiable, versioned filename.
+    name=f"Deckster-v{VERSION}",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

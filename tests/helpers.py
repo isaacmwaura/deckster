@@ -68,15 +68,16 @@ def run(coro):
 
 @asynccontextmanager
 async def engine_client(registry=None, key_sender=None, authenticator=None,
-                        input_bindings=None, media=None):
+                        input_bindings=None, media=None, soundboard=None):
     """Yield (client, state, controller) with an inline engine + aiohttp test server."""
     state = AppState()
     loop = asyncio.get_running_loop()
     backend = MockAudioBackend()
     engine = InlineEngine(backend)
     controller = Controller(state, engine, loop, registry=registry,
-                            input_bindings=input_bindings, media=media, key_sender=key_sender)
-    if registry is not None or input_bindings is not None:
+                            input_bindings=input_bindings, media=media, soundboard=soundboard,
+                            key_sender=key_sender)
+    if registry is not None or input_bindings is not None or soundboard is not None:
         controller.load_initial_macros()
     prime_state(state, backend)
     app = create_app(state, controller=controller.handle, authenticator=authenticator)

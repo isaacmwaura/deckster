@@ -3,7 +3,7 @@
 `adb reverse tcp:PORT tcp:PORT` makes the phone's own localhost:PORT tunnel to the
 agent through the USB cable, so the phone's browser reaches the agent without the
 traffic ever touching the network. Combined with a loopback bind, this is the
-secure default (BUILD-PLAN.md 1, HTML 4).
+secure default.
 
 Subprocess I/O is injectable so command construction and device parsing are unit
 testable without a real adb binary or phone (the live behaviour is troubleshoot-

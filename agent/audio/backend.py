@@ -4,7 +4,7 @@ All methods are synchronous and are only ever called on the AudioEngine's
 dedicated COM thread (see engine.py). Keeping this an explicit interface lets the
 mock backend stand in for pycaw so the whole protocol/security stack is testable
 without real audio hardware — the main way we sidestep the sandbox's inability to
-run Discord or produce sound (BUILD-PLAN.md challenge 17).
+run Discord or produce sound.
 
 Volume scalars are linear 0..1 in both cases, but they come from two different
 Windows interfaces: per-session ISimpleAudioVolume vs endpoint
@@ -23,7 +23,7 @@ class SessionInfo:
     level: float       # 0..1
     muted: bool
     active: bool = True
-    boundKey: str | None = None  # optional hotkey bound to this app (P3)
+    boundKey: str | None = None  # optional hotkey bound to this app
     iconKey: str | None = None   # key into IconStore for the app's real exe icon (served at /icon/{key})
 
 

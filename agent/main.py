@@ -1,9 +1,9 @@
-"""Agent entrypoint: start the audio engine (P1), the web/WebSocket server, and
+"""Agent entrypoint: start the audio engine, the web/WebSocket server, and
 a best-effort system tray icon.
 
-Threading model (BUILD-PLAN.md 5): the aiohttp server runs on the main thread's
+Threading model: the aiohttp server runs on the main thread's
 asyncio loop; the system tray runs on a secondary thread (best-effort, since a
-headless environment has no tray); the audio engine (P1) owns its own COM thread.
+headless environment has no tray); the audio engine owns its own COM thread.
 A single shutdown Event is observed by all of them.
 
 Connection mode is live-switchable: `Runtime` binds the server to 127.0.0.1
@@ -36,6 +36,7 @@ from .security.auth import DeviceAuthenticator
 from .security.pairing import PairingManager
 from .server import create_app
 from .state import AppState
+from .soundboard import SoundboardService
 from .transport.adb import AdbReverse
 from .window import run_window
 
@@ -340,8 +341,11 @@ def main() -> None:
     if port != requested_port:
         log.warning("port %d busy; using %d instead", requested_port, port)
     state = AppState()
+    # Created before the desktop window so its clip importer can use the same
+    # service instance as the phone controller.
+    soundboard = SoundboardService(data_dir())
 
-    # --- security stack (P2) ---------------------------------------------
+    # --- security stack ---------------------------------------------------
     salt = settings["token_salt"]
     allowlist = AllowList(data_dir() / "allowlist.json", salt)
     pairing = PairingManager(
@@ -371,7 +375,7 @@ def main() -> None:
     # Settings surface (localhost-only): the .exe's control panel.
     admin = Admin(runtime, pairing, allowlist, fingerprint=fingerprint)
 
-    # Safety: LAN mode exposes the agent to the network and has no TLS yet (P4).
+    # Safety: LAN mode exposes the agent to the network and has no TLS yet.
     if runtime.mode == "lan":
         log.warning("LAN mode: agent is reachable on the network without TLS. "
                     "Pairing token is still required for every command.")
@@ -395,7 +399,7 @@ def main() -> None:
         # Deckster's own window (its own UI thread) + a tray icon for the background.
         icon_png = str(resource_root() / "web" / "icon-64.png")
         threading.Thread(target=run_window,
-                         args=(admin, stop_thread, cmd_queue, icon_png),
+                         args=(admin, stop_thread, cmd_queue, icon_png, soundboard),
                          daemon=True).start()
         threading.Thread(target=_start_tray,
                         args=(stop_thread, runtime, pairing, allowlist, cmd_queue),
@@ -412,7 +416,7 @@ def main() -> None:
     bindings = AppInputBindings(data_dir() / "app_bindings.json")
     media = MediaService(state, loop)
     controller = Controller(state, engine, loop, registry=registry,
-                            input_bindings=bindings, media=media)
+                            input_bindings=bindings, media=media, soundboard=soundboard)
     controller.load_initial_macros()
     engine.set_on_poll(controller.make_on_poll())
     try:
@@ -439,6 +443,7 @@ def main() -> None:
         stop_thread.set()
         advertiser.close()
         adb.stop()
+        soundboard.close()
         engine.stop()
         loop.close()
 

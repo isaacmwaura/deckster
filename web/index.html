@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="stylesheet" href="/static/style.css?v=22">
+  <link rel="stylesheet" href="/static/style.css?v=23">
 </head>
 <body>
   <div id="app" class="app">
@@ -21,6 +21,7 @@
       <span id="conn-text" class="conn-text">connecting…</span>
       <span class="spacer"></span>
       <div class="tabs">
+        <button id="tab-soundboard" class="tab" data-page="soundboard">Soundboard</button>
         <button id="tab-mixer" class="tab tab--on" data-page="0">Mixer</button>
         <button id="tab-devices" class="tab" data-page="1">Devices&nbsp;›</button>
       </div>
@@ -162,6 +163,44 @@
       </div>
     </div>
 
+    <!-- Configuration B soundboard. Mixer remains home; this is reached by the
+         top control or an upward swipe away from the media edge. -->
+    <div id="soundboard" class="soundboard" aria-hidden="true">
+      <section class="soundboard-sheet">
+        <header class="soundboard-topbar">
+          <button id="soundboard-back" class="soundboard-back" aria-label="Back to mixer">‹ <span>Mixer</span></button>
+          <div><div class="soundboard-title">Soundboard</div><div id="soundboard-status" class="soundboard-status">Set up a routing endpoint</div></div>
+          <button id="soundboard-stop" class="soundboard-stop">■ Stop all</button>
+        </header>
+        <div class="soundboard-body">
+          <section id="soundboard-setup" class="soundboard-setup">
+            <div class="soundboard-setup-title">Configuration B</div>
+            <p id="soundboard-driver-hint">Mix your mic and pads into one shared virtual microphone. Select <b>CABLE Input</b> as Voice after installing VB-Cable; use <b>CABLE Output</b> as your mic in Discord or your game.</p>
+            <label>Physical microphone <select id="soundboard-input"></select></label>
+            <label>Voice endpoint <select id="soundboard-voice"></select></label>
+            <label>Monitor endpoint <select id="soundboard-ears"></select></label>
+            <label>Navigation layout <select id="soundboard-layout"><option value="a">A — soundboard above Mixer</option><option value="b">B — soundboard left of Mixer</option></select></label>
+            <button id="soundboard-save" class="soundboard-save">Apply routing</button>
+            <p id="soundboard-error" class="soundboard-error"></p>
+          </section>
+          <section class="soundboard-pads-wrap">
+            <div class="soundboard-pads-head"><span>PADS</span><span id="soundboard-pad-hint">Add clips from the Deckster desktop app</span></div>
+            <div id="soundboard-pads" class="soundboard-pads"></div>
+          </section>
+        </div>
+        <div id="soundboard-editor" class="soundboard-editor hidden">
+          <div class="soundboard-editor-card">
+            <h2 id="soundboard-editor-title">Edit pad</h2>
+            <label>Label <input id="soundboard-edit-label" maxlength="48"></label>
+            <label>Emoji <input id="soundboard-edit-emoji" maxlength="8"></label>
+            <label>Gain <input id="soundboard-edit-gain" type="range" min="0" max="1" step="0.05"></label>
+            <div class="soundboard-routes"><label><input id="soundboard-edit-voice" type="checkbox"> Voice</label><label><input id="soundboard-edit-ears" type="checkbox"> Ears</label></div>
+            <div class="soundboard-editor-actions"><button id="soundboard-edit-delete" class="soundboard-edit-delete">Remove</button><span class="spacer"></span><button id="soundboard-edit-cancel">Cancel</button><button id="soundboard-edit-save" class="soundboard-save">Save</button></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <!-- OLED screensaver: near-black, a single dim wandering clock; tap to wake -->
     <div id="saver" class="saver hidden">
       <div class="saver-drift">
@@ -170,6 +209,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=22"></script>
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

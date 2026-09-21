@@ -321,6 +321,10 @@
     inputMuted: {},                          // optimistic per-app mic-mute toggle (OS can't read it)
     media: [],                               // now-playing SMTC sessions
     mediaOpen: false,                        // media sheet visible
+    soundboard: { clips: [], config: {}, outputs: [], inputs: [], configured: false,
+                  runtime: "setup_required", error: "" },
+    soundboardOpen: false,
+    soundboardEditingId: null,
     paired: false,                           // false until the phone is paired (gates media)
     selectedId: null, dialMode: "app", page: 0,
   };
@@ -404,6 +408,7 @@
       case "snapshot": model.paired = true; updateChrome(); showPair(false); model.retry = 0; setConnection("connected"); ingestSnapshot(m); renderAll(); return;
       case "state": applyState(m); return;
       case "media": model.media = m.media || []; renderMedia(); return;
+      case "soundboard": model.soundboard = m.soundboard || model.soundboard; renderSoundboard(); return;
       case "app_input_ok": return;   // keystroke sent; optimistic toggle already applied
       case "macro_ok": return;
       case "error": showToast("Command failed", m.msg || m.code); return;
@@ -431,6 +436,7 @@
     model.macros = m.macros || [];
     model.appInputBindings = m.appInputBindings || {};
     model.media = m.media || model.media;
+    model.soundboard = m.soundboard || model.soundboard;
     if (!model.selectedId && model.apps.length) model.selectedId = model.apps[0].id;
     if (model.selectedId && !model.apps.some(function (a) { return a.id === model.selectedId; }))
       model.selectedId = model.apps.length ? model.apps[0].id : null;
@@ -491,7 +497,7 @@
 
   // ================================================================ RENDER
   var dial;
-  function renderAll() { renderTopbar(); renderSystem(); renderApps(); renderDevices(); renderMedia(); syncDialFromModel(); }
+  function renderAll() { renderTopbar(); renderSystem(); renderApps(); renderDevices(); renderMedia(); renderSoundboard(); syncDialFromModel(); }
 
   function renderTopbar() {
     // The current mix target's identity now lives above the dial. The icon is a
@@ -892,9 +898,121 @@
   }
   function openMedia() { if (model.mediaOpen || !model.paired) return; model.mediaOpen = true; $("media").className = "media open"; renderMedia(); buzz(HAPTIC.tap); nudgeActivity(); }
   // Chrome (media handle etc.) is only available once the phone is paired.
-  function updateChrome() { var h = $("media-handle"); if (h) h.style.display = model.paired ? "" : "none"; if (!model.paired && model.mediaOpen) closeMedia(); }
+  function updateChrome() {
+    var h = $("media-handle"), sb = $("tab-soundboard");
+    if (h) h.style.display = model.paired ? "" : "none";
+    if (sb) sb.style.display = model.paired ? "" : "none";
+    if (!model.paired && model.mediaOpen) closeMedia();
+    if (!model.paired && model.soundboardOpen) closeSoundboard();
+  }
   function closeMedia() { if (!model.mediaOpen) return; model.mediaOpen = false; $("media").className = "media"; nudgeActivity(); }
   function toggleMedia() { if (model.mediaOpen) closeMedia(); else openMedia(); }
+
+  // ============================================================ SOUNDBOARD
+  function fillSoundboardSelect(node, devices, selected, placeholder) {
+    if (!node) return;
+    // Poll snapshots arrive frequently for live meters. Do not blow away a choice
+    // the user is in the middle of making unless the server-side configuration or
+    // actual device list changed.
+    var sig = selected + "|" + devices.map(function (d) { return d.id + ":" + d.name; }).join("|");
+    if (node._soundboardSignature === sig) return;
+    node._soundboardSignature = sig;
+    node.innerHTML = "";
+    var empty = el("option"); empty.value = ""; empty.textContent = placeholder; node.appendChild(empty);
+    devices.forEach(function (d) {
+      var opt = el("option"); opt.value = d.id; opt.textContent = d.name || d.id;
+      opt.selected = d.id === selected; node.appendChild(opt);
+    });
+  }
+  function renderSoundboard() {
+    var sb = model.soundboard || {}, cfg = sb.config || {};
+    fillSoundboardSelect($("soundboard-input"), sb.inputs || [], cfg.inputId || "", "Choose microphone");
+    fillSoundboardSelect($("soundboard-voice"), sb.outputs || [], cfg.voiceOutputId || "", "Choose virtual Voice endpoint");
+    fillSoundboardSelect($("soundboard-ears"), sb.outputs || [], cfg.earsOutputId || "", "No monitor output");
+    if ($("soundboard-layout")) $("soundboard-layout").value = cfg.layout === "b" ? "b" : "a";
+    var stat = $("soundboard-status"), err = $("soundboard-error");
+    if (stat) stat.textContent = sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Setup required";
+    if (err) err.textContent = sb.error || "";
+    var driver = $("soundboard-driver-hint");
+    if (driver) {
+      var hasCable = (sb.outputs || []).some(function (d) { return /cable input/i.test(d.name || ""); });
+      driver.textContent = hasCable ? "VB-Cable detected. Choose CABLE Input for Voice; set CABLE Output as the microphone in your call or game." : "VB-Cable was not detected. Install it separately, then choose CABLE Input for Voice. Deckster never bundles the driver.";
+    }
+    var pads = $("soundboard-pads"); if (!pads) return;
+    pads.innerHTML = "";
+    var clips = sb.clips || [];
+    if (!clips.length) {
+      var empty = el("div", "soundboard-empty");
+      empty.innerHTML = "<b>No pads yet</b><span>Add WAV, MP3, OGG, or FLAC clips from the Soundboard section in the Deckster desktop app.</span>";
+      pads.appendChild(empty); return;
+    }
+    clips.forEach(function (clip) {
+      var pad = el("button", "sound-pad" + (clip.playing ? " playing" : ""));
+      pad.disabled = model.connection !== "connected";
+      bindSoundboardPad(pad, clip);
+      var icon = el("span", "sound-pad-emoji"); icon.textContent = clip.emoji || "♪";
+      var name = el("span", "sound-pad-name"); name.textContent = clip.label || "Untitled";
+      var buses = el("span", "sound-pad-buses");
+      if (clip.voice) { var v = el("span", "sound-pad-bus"); v.textContent = "VOICE"; buses.appendChild(v); }
+      if (clip.ears) { var e = el("span", "sound-pad-bus ears"); e.textContent = "EARS"; buses.appendChild(e); }
+      pad.appendChild(icon); pad.appendChild(name); pad.appendChild(buses); pads.appendChild(pad);
+    });
+  }
+  function bindSoundboardPad(pad, clip) {
+    var timer = null, held = false;
+    function clear() { if (timer) { clearTimeout(timer); timer = null; } }
+    function start() { held = false; clear(); timer = setTimeout(function () { held = true; openSoundboardEditor(clip); buzz(HAPTIC.hold); }, 550); }
+    function end() { clear(); }
+    pad.addEventListener("pointerdown", start); pad.addEventListener("pointerup", end);
+    pad.addEventListener("pointercancel", clear); pad.addEventListener("pointerleave", clear);
+    pad.onclick = function () {
+      if (held) { held = false; return; }
+      send({ t: "soundboard_play", clipId: clip.id }); buzz(HAPTIC.tap); nudgeActivity();
+    };
+  }
+  function openSoundboardEditor(clip) {
+    model.soundboardEditingId = clip.id;
+    $("soundboard-editor-title").textContent = "Edit " + (clip.label || "pad");
+    $("soundboard-edit-label").value = clip.label || ""; $("soundboard-edit-emoji").value = clip.emoji || "♪";
+    $("soundboard-edit-gain").value = clip.gain != null ? clip.gain : 1;
+    $("soundboard-edit-voice").checked = !!clip.voice; $("soundboard-edit-ears").checked = !!clip.ears;
+    $("soundboard-editor").className = "soundboard-editor";
+  }
+  function closeSoundboardEditor() { model.soundboardEditingId = null; $("soundboard-editor").className = "soundboard-editor hidden"; }
+  function saveSoundboardEditor() {
+    if (!model.soundboardEditingId) return;
+    send({ t: "soundboard_update_clip", clipId: model.soundboardEditingId, changes: {
+      label: $("soundboard-edit-label").value, emoji: $("soundboard-edit-emoji").value,
+      gain: +$("soundboard-edit-gain").value, voice: $("soundboard-edit-voice").checked,
+      ears: $("soundboard-edit-ears").checked
+    }}); closeSoundboardEditor(); buzz(HAPTIC.tap);
+  }
+  function deleteSoundboardClip() {
+    if (!model.soundboardEditingId) return;
+    send({ t: "soundboard_remove_clip", clipId: model.soundboardEditingId }); closeSoundboardEditor(); buzz(HAPTIC.mute);
+  }
+  function saveSoundboardConfig() {
+    var cfg = (model.soundboard || {}).config || {};
+    send({ t: "soundboard_config", config: {
+      inputId: $("soundboard-input").value,
+      voiceOutputId: $("soundboard-voice").value,
+      earsOutputId: $("soundboard-ears").value,
+      layout: $("soundboard-layout").value || "a"
+    }});
+    buzz(HAPTIC.tap); nudgeActivity();
+  }
+  function openSoundboard() {
+    if (model.soundboardOpen || !model.paired) return;
+    model.soundboardOpen = true;
+    var layout = ((model.soundboard || {}).config || {}).layout === "b" ? " layout-b" : "";
+    $("soundboard").className = "soundboard" + layout + " open";
+    $("soundboard").setAttribute("aria-hidden", "false"); renderSoundboard(); buzz(HAPTIC.tap); nudgeActivity();
+  }
+  function closeSoundboard() {
+    if (!model.soundboardOpen) return;
+    model.soundboardOpen = false; $("soundboard").className = "soundboard";
+    $("soundboard").setAttribute("aria-hidden", "true"); nudgeActivity();
+  }
 
   // Media opens with a swipe UP from the bottom edge in BOTH orientations, and
   // closes with a swipe down. Bottom-edge + vertical keeps it clear of the
@@ -905,8 +1023,13 @@
     var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
     var dx = t.clientX - tsX, dy = t.clientY - tsY; if (Date.now() - tsT > 800) return;
     var H = window.innerHeight, EDGE = 90, TH = 55;
-    if (!model.mediaOpen) {
+    var layoutB = (((model.soundboard || {}).config || {}).layout === "b");
+    if (model.soundboardOpen) {
+      if ((layoutB && dx < -TH && Math.abs(dx) > Math.abs(dy)) || (!layoutB && dy > TH && Math.abs(dy) > Math.abs(dx))) closeSoundboard();
+    } else if (!model.mediaOpen) {
       if (tsY >= H - EDGE && dy < -TH && Math.abs(dy) > Math.abs(dx)) openMedia();
+      else if (layoutB && dx > TH && Math.abs(dx) > Math.abs(dy)) openSoundboard();
+      else if (!layoutB && tsY < H - EDGE && dy < -TH && Math.abs(dy) > Math.abs(dx)) openSoundboard();
     } else if (dy > TH && Math.abs(dy) > Math.abs(dx)) {
       closeMedia();
     }
@@ -1110,6 +1233,7 @@
     };
     // tabs + pager
     $("tab-mixer").onclick = function () { goPage(0); }; $("tab-devices").onclick = function () { goPage(1); }; $("dev-back").onclick = function () { goPage(0); };
+    $("tab-soundboard").onclick = openSoundboard;
     $("pager").addEventListener("scroll", function (e) { var el = e.currentTarget, idx = Math.round(el.scrollLeft / el.clientWidth); if (idx !== model.page) setPage(idx); });
     // pairing
     $("pair-go").onclick = function () { if (pairCode.length === 6) send({ t: "pair", code: pairCode, device: { id: deviceId(), name: "Phone" } }); };
@@ -1138,6 +1262,12 @@
     if ($("media-handle")) $("media-handle").onclick = toggleMedia;
     if ($("media-up")) $("media-up").onclick = closeMedia;   // chevron: back up to mixer
     if ($("media-list")) $("media-list").addEventListener("scroll", updateMediaDots, { passive: true });
+    if ($("soundboard-back")) $("soundboard-back").onclick = closeSoundboard;
+    if ($("soundboard-stop")) $("soundboard-stop").onclick = function () { send({ t: "soundboard_stop_all" }); buzz(HAPTIC.mute); nudgeActivity(); };
+    if ($("soundboard-save")) $("soundboard-save").onclick = saveSoundboardConfig;
+    if ($("soundboard-edit-save")) $("soundboard-edit-save").onclick = saveSoundboardEditor;
+    if ($("soundboard-edit-delete")) $("soundboard-edit-delete").onclick = deleteSoundboardClip;
+    if ($("soundboard-edit-cancel")) $("soundboard-edit-cancel").onclick = closeSoundboardEditor;
     document.addEventListener("touchstart", onTouchStart, { passive: true });
     document.addEventListener("touchend", onTouchEnd, { passive: true });
     // resume-resync

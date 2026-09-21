@@ -28,6 +28,9 @@ install a thin native app (below); any other phone just opens it in the browser.
   with live signal meters.
 - **Now playing** — title, artist, album art, and play/pause/next/prev for Spotify and
   the browser tab that's playing.
+- **Game-agnostic soundboard** — import clips on the PC, then trigger them from the
+  phone with per-pad gain and separate **Voice** (call/game) and **Ears** (monitor)
+  routes. Multiple clips can play at once and **Stop all** silences them immediately.
 - **Rearrange your app tiles** — long‑press and drag, like an Android home screen.
 - **Made for a wall/desk mount** — fullscreen, landscape‑locked, screen stays awake,
   with an OLED burn‑in guard.
@@ -54,7 +57,7 @@ window hides it to the tray; click the tray icon → **Show Deckster** to bring 
 back.) There you'll see the **connect URL**, the **pairing code**, and toggles for
 USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
 
-> Prefer a one‑click install? Grab `Deckster.exe` from the
+> Prefer a one‑click install? Grab the versioned `Deckster-vX.Y.Z.exe` from the
 > [Releases](../../releases) page — no Python needed. It's unsigned (open source), so
 > Windows SmartScreen may warn once; choose **More info → Run anyway**.
 
@@ -64,7 +67,7 @@ USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
 
 ### 📱 Android — use the app (recommended)
 
-Install `Deckster.apk` from [Releases](../../releases) (allow "install from this
+Install the versioned `Deckster-vX.Y.Z.apk` from [Releases](../../releases) (allow "install from this
 source" — normal for a sideloaded app). Then pick a connection:
 
 **USB — primary, most secure.** Traffic never touches the network.
@@ -95,6 +98,24 @@ iPhones connect over **Wi‑Fi in Safari** (iOS can't do the USB path):
 > **Recommended iPhone settings:** Wi‑Fi, pair by scanning the QR with the Camera app,
 > then Add to Home Screen. Leave TLS **off** for the browser (a self‑signed certificate
 > would warn); the pairing token still protects every command on your home network.
+
+### Set up the soundboard
+
+Deckster mixes your physical microphone and clips into a normal Windows microphone
+endpoint, so it works with Discord, games, OBS, and other voice apps without game-specific
+integration. Windows needs a virtual audio endpoint for this; the current release supports
+[VB-CABLE](https://vb-audio.com/Cable/) but does not bundle its separately licensed driver.
+
+1. Install VB-CABLE, then restart Windows if its installer asks you to.
+2. In the Deckster PC control panel, open **Soundboard** and import WAV, MP3, OGG, or
+   FLAC clips.
+3. On the phone's soundboard page, choose your physical microphone and select
+   **CABLE Input** as the **Voice** output. Optionally select your headphones/speakers
+   for **Ears** monitoring.
+4. In Discord, your game, or OBS, select **CABLE Output** as the microphone.
+
+Your clip assignments, gain, routing, selected endpoints, and navigation layout persist
+across restarts. Layout A puts Soundboard above Mixer; Layout B puts it to the left.
 
 ### At a glance
 
@@ -128,7 +149,7 @@ pip install pyinstaller
 pyinstaller build/streamcontrol.spec --distpath dist --workpath build/_work --noconfirm
 ```
 
-Produces `dist/Deckster.exe` (windowed tray app; logs to
+Produces `dist/Deckster-vX.Y.Z.exe` (windowed tray app; logs to
 `%LOCALAPPDATA%\StreamControl\agent.log`).
 
 **Android app → `.apk`:** open the [`android/`](android) folder in **Android Studio**

@@ -1,4 +1,4 @@
-"""Device authenticator: the real auth gate that replaces P0's NullAuth.
+"""Device authenticator: the real auth gate that replaces the placeholder NullAuth.
 
 Implements the server's Authenticator protocol. Pre-auth, a connection may only
 `hello` (present an existing token) or `pair` (redeem a one-time code). Everything

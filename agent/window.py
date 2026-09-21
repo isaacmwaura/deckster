@@ -16,6 +16,7 @@ commands ("show"/"quit") so the tray thread never touches Tk.
 from __future__ import annotations
 
 import queue
+from pathlib import Path
 
 from .log import get_logger
 
@@ -173,7 +174,8 @@ class StatusPill:
 
 
 class DecksterWindow:
-    def __init__(self, admin, stop_event, cmd_queue: "queue.Queue", icon_path: str | None = None):
+    def __init__(self, admin, stop_event, cmd_queue: "queue.Queue", icon_path: str | None = None,
+                 soundboard=None):
         import tkinter as tk
 
         self.admin = admin
@@ -183,6 +185,7 @@ class DecksterWindow:
         self._qr_shown = ""
         self.rail_expanded = True
         self.active_section = "connect"
+        self.soundboard = soundboard
 
         self.root = tk.Tk()
         self.root.title("Deckster")
@@ -225,6 +228,7 @@ class DecksterWindow:
         self._nav = {}
         for key, glyph, label in (("connect", "▦", "Connect"),
                                   ("devices", "☷", "Devices"),
+                                  ("soundboard", "♪", "Soundboard"),
                                   ("settings", "⚙", "Settings"),
                                   ("about", "ⓘ", "About")):
             self._nav[key] = self._make_nav(key, glyph, label)
@@ -255,6 +259,7 @@ class DecksterWindow:
         self.sections = {
             "connect": self._build_connect(),
             "devices": self._build_devices(),
+            "soundboard": self._build_soundboard(),
             "settings": self._build_settings(),
             "about": self._build_about(),
         }
@@ -396,6 +401,34 @@ class DecksterWindow:
                  bg=BG, fg=SUB, font=("Segoe UI", 8)).pack(fill="x", pady=(12, 0))
         return f
 
+    def _build_soundboard(self):
+        """Desktop-only clip import surface; routing itself stays on the phone."""
+        import tkinter as tk
+
+        f = tk.Frame(self.content, bg=BG)
+        tk.Label(f, text="SOUNDBOARD CLIPS", bg=BG, fg=SUB,
+                 font=("Segoe UI", 8, "bold")).pack(fill="x", pady=(4, 6))
+        card = tk.Frame(f, bg=CARD, highlightthickness=1,
+                        highlightbackground=LINE, highlightcolor=LINE)
+        card.pack(fill="both", expand=True)
+        self.soundboard_clips = tk.Listbox(card, bg=CARD, fg=INK2, height=8, borderwidth=0,
+                                            highlightthickness=0, activestyle="none",
+                                            font=("Segoe UI", 10))
+        self.soundboard_clips.pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        self._soundboard_clip_ids: list[str] = []
+        actions = tk.Frame(card, bg=CARD)
+        actions.pack(fill="x", padx=10, pady=(0, 10))
+        PillButton(actions, "Add audio clip", self._import_soundboard_clip, kind="primary",
+                   width=150, height=34, bg=CARD, radius=9).pack(side="left")
+        PillButton(actions, "Remove selected", self._remove_soundboard_clip, kind="danger",
+                   width=142, height=34, bg=CARD, radius=9).pack(side="right")
+        self.soundboard_note = tk.Label(
+            f, text="Pads and Voice/Ears routing are configured from the phone. Clips are copied into Deckster's data folder.",
+            bg=BG, fg=SUB, font=("Segoe UI", 8), justify="left", anchor="w", wraplength=420,
+        )
+        self.soundboard_note.pack(fill="x", pady=(9, 0))
+        return f
+
     def _build_about(self):
         import tkinter as tk
         f = tk.Frame(self.content, bg=BG)
@@ -451,6 +484,23 @@ class DecksterWindow:
     def _allow_firewall(self):
         try: self.admin.allow_firewall()      # pops one UAC prompt; user accepts
         except Exception: log.exception("allow_firewall")
+    def _import_soundboard_clip(self):
+        if self.soundboard is None:
+            return
+        try:
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(title="Choose soundboard clip",
+                                              filetypes=[("Audio clips", "*.wav *.mp3 *.ogg *.flac")])
+            if path:
+                self.soundboard.import_clip(Path(path))
+        except Exception: log.exception("import soundboard clip")
+    def _remove_soundboard_clip(self):
+        if self.soundboard is None:
+            return
+        sel = self.soundboard_clips.curselection()
+        if sel and sel[0] < len(self._soundboard_clip_ids):
+            try: self.soundboard.remove_clip(self._soundboard_clip_ids[sel[0]])
+            except Exception: log.exception("remove soundboard clip")
 
     def _hide(self):
         self.root.withdraw()
@@ -491,6 +541,7 @@ class DecksterWindow:
             self.autostart_toggle.set(bool(s.get("autostart")))
             self._set_firewall_warning(bool(s.get("firewallNeeded")))
             self._fill_devices(s.get("devices", []))
+            self._fill_soundboard_clips()
             self._update_qr(s.get("qrPath", ""))
         except Exception:  # noqa: BLE001
             log.exception("window refresh")
@@ -518,6 +569,24 @@ class DecksterWindow:
             for d in devices:
                 self.devices.insert("end", "  " + str(d.get("name", "Device")))
 
+    def _fill_soundboard_clips(self):
+        if not hasattr(self, "soundboard_clips"):
+            return
+        clips = self.soundboard.snapshot().get("clips", []) if self.soundboard is not None else []
+        ids = [str(c.get("id")) for c in clips]
+        if ids == self._soundboard_clip_ids:
+            return
+        self._soundboard_clip_ids = ids
+        self.soundboard_clips.delete(0, "end")
+        if not clips:
+            self.soundboard_clips.insert("end", "  No clips yet — add a WAV, MP3, OGG, or FLAC file")
+        else:
+            for clip in clips:
+                routes = []
+                if clip.get("voice"): routes.append("Voice")
+                if clip.get("ears"): routes.append("Ears")
+                self.soundboard_clips.insert("end", "  " + str(clip.get("label", "Untitled")) + "  ·  " + "+".join(routes or ["Muted"]))
+
     def _update_qr(self, path):
         if not path or path == self._qr_shown:
             return
@@ -534,9 +603,9 @@ class DecksterWindow:
         self.root.mainloop()
 
 
-def run_window(admin, stop_event, cmd_queue, icon_path=None):
+def run_window(admin, stop_event, cmd_queue, icon_path=None, soundboard=None):
     """Entry for the window thread. Best-effort: never crash the app if Tk is absent."""
     try:
-        DecksterWindow(admin, stop_event, cmd_queue, icon_path).run()
+        DecksterWindow(admin, stop_event, cmd_queue, icon_path, soundboard).run()
     except Exception as exc:  # noqa: BLE001
         log.info("window unavailable (%s); running with tray only", exc)

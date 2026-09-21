@@ -30,6 +30,7 @@ class Controller:
                  registry: MacroRegistry | None = None,
                  input_bindings: AppInputBindings | None = None,
                  media=None,
+                 soundboard=None,
                  key_sender: Callable[[str], None] | None = None) -> None:
         self._state = state
         self._engine = engine
@@ -37,6 +38,7 @@ class Controller:
         self._registry = registry
         self._bindings = input_bindings
         self._media = media  # MediaService | None
+        self._soundboard = soundboard  # SoundboardService | None
         # Injectable so tests never fire real keystrokes into the focused window.
         if key_sender is not None:
             self._key_sender = key_sender
@@ -50,6 +52,16 @@ class Controller:
             self._state.set_macros(self._registry.list())
         if self._bindings is not None:
             self._state.set_app_bindings(self._bindings.list())
+        self._publish_soundboard()
+
+    def _publish_soundboard(self) -> None:
+        if self._soundboard is not None:
+            self._soundboard.ensure_started(
+                self._state.devices.get("outputs", []), self._state.devices.get("inputs", []),
+            )
+            self._state.set_soundboard(self._soundboard.snapshot(
+                self._state.devices.get("outputs", []), self._state.devices.get("inputs", []),
+            ))
 
     # ---- engine poll -> state (called from the engine thread) -------------
     def make_on_poll(self):
@@ -64,9 +76,15 @@ class Controller:
             meters = data.get("meters")
             # Marshal the state update onto the event loop thread.
             self._loop.call_soon_threadsafe(
-                self._state.ingest_full, sessions, speaker, mic, outputs, inputs, meters
+                self._ingest_poll, sessions, speaker, mic, outputs, inputs, meters
             )
         return _on_poll
+
+    def _ingest_poll(self, sessions, speaker, mic, outputs, inputs, meters) -> None:
+        self._state.ingest_full(sessions, speaker, mic, outputs, inputs, meters)
+        # Endpoint lists can change as a virtual cable is installed. Publish the
+        # fresh choices with the next poll without requiring an agent restart.
+        self._publish_soundboard()
 
     async def _call(self, fn) -> Any:
         return await asyncio.wrap_future(self._engine.submit(fn))
@@ -99,6 +117,16 @@ class Controller:
                 await self._clear_app_input_binding(client, msg)
             elif t == "media_control":
                 await self._media_control(client, msg)
+            elif t == "soundboard_play":
+                await self._soundboard_play(client, msg)
+            elif t == "soundboard_stop_all":
+                await self._soundboard_stop_all(client)
+            elif t == "soundboard_config":
+                await self._soundboard_config(client, msg)
+            elif t == "soundboard_update_clip":
+                await self._soundboard_update_clip(client, msg)
+            elif t == "soundboard_remove_clip":
+                await self._soundboard_remove_clip(client, msg)
             else:
                 await client.send({"t": "error", "code": "unimpl", "msg": f"no handler for {t!r}"})
         except Exception as exc:  # noqa: BLE001 - report, never crash the socket
@@ -129,7 +157,7 @@ class Controller:
             await self._call(lambda b: b.set_master_mute(kind, muted))
             self._state.apply_master(kind, muted=muted)
 
-    # ---- macros (P3) ------------------------------------------------------
+    # ---- macros -----------------------------------------------------------
     async def _run_macro(self, client: Client, msg: dict[str, Any]) -> None:
         if self._registry is None:
             await client.send({"t": "error", "code": "nomacro", "msg": "macros disabled"})
@@ -217,6 +245,47 @@ class Controller:
         if not ok:
             await client.send({"t": "error", "code": "mediafail",
                                "msg": f"could not {action or 'control'} media"})
+
+    # ---- soundboard (Configuration B) -----------------------------------
+    async def _soundboard_play(self, client: Client, msg: dict[str, Any]) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        self._soundboard.play(str(msg.get("clipId", "")))
+        self._publish_soundboard()
+
+    async def _soundboard_stop_all(self, client: Client) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        self._soundboard.stop_all()
+        self._publish_soundboard()
+
+    async def _soundboard_config(self, client: Client, msg: dict[str, Any]) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        self._soundboard.configure(msg.get("config") or {}, self._state.devices.get("outputs", []),
+                                   self._state.devices.get("inputs", []))
+        self._publish_soundboard()
+
+    async def _soundboard_update_clip(self, client: Client, msg: dict[str, Any]) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        changes = msg.get("changes")
+        if not isinstance(changes, dict):
+            raise ValueError("missing soundboard changes")
+        self._soundboard.update_clip(str(msg.get("clipId", "")), **changes)
+        self._publish_soundboard()
+
+    async def _soundboard_remove_clip(self, client: Client, msg: dict[str, Any]) -> None:
+        if self._soundboard is None:
+            await client.send({"t": "error", "code": "nosoundboard", "msg": "soundboard unavailable"})
+            return
+        if not self._soundboard.remove_clip(str(msg.get("clipId", ""))):
+            raise ValueError("unknown soundboard clip")
+        self._publish_soundboard()
 
     async def _set_default_device(self, msg: dict[str, Any], flow: str) -> None:
         device_id = msg["deviceId"]

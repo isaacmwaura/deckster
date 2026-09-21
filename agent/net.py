@@ -1,4 +1,4 @@
-"""Networking helpers for the kiosk experience (P4).
+"""Networking helpers for the kiosk experience.
 
 - Port-conflict fallback: if the preferred port is taken, pick the next free one
   and surface the actual port so the QR/URL stay correct.

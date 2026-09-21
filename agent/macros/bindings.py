@@ -3,7 +3,7 @@
 Windows has no per-application microphone mute, so a voice app's mic-mute chip
 can't drive a real OS control. Instead each app id is bound to the key combo the
 *app itself* listens for (e.g. Discord's "toggle mute" hotkey); tapping the chip
-injects that combo via the P3 macro path (agent.macros.input.send_combo).
+injects that combo via the macro path (agent.macros.input.send_combo).
 
 We can't read the app's resulting mute state back, so the toggle is optimistic on
 the client; the agent only stores the binding and fires the keystroke. Bindings

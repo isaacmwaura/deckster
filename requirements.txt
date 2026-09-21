@@ -8,6 +8,10 @@ qrcode>=7.4
 cryptography>=42.0   # self-signed TLS (agent HTTPS; the Android app pins the cert)
 zeroconf>=0.130      # mDNS advertising so the Android app auto-discovers the PC on Wi-Fi
 winsdk>=1.0.0b10   # SMTC now-playing (media page); optional at runtime, degrades gracefully
+# Soundboard Configuration B: PortAudio uses WASAPI shared-mode endpoints on Windows.
+sounddevice>=0.5
+numpy>=1.24
+soundfile>=0.12    # MP3/OGG/FLAC decode; WAV also has a stdlib fallback
 
 # Dev / build (not required to run the agent):
 #   pytest pytest-asyncio pyinstaller

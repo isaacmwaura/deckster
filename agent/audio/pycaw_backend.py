@@ -5,11 +5,11 @@ Runs only on the AudioEngine's COM thread. Key behaviours:
 - Sessions are grouped per *process* (all of an app's sessions become one logical
   control), because "set Discord to 40%" should move every Discord stream. This
   is the pragmatic answer to the session-identity problem for the MVP; a finer
-  per-stream model can come later (BUILD-PLAN.md challenge 3).
+  per-stream model can come later.
 - Speaker master uses the AudioDevice.EndpointVolume helper; the microphone is
   returned as a raw IMMDevice by this pycaw build, so we Activate it ourselves.
 - This pycaw build exposes AudioUtilities.SetDefaultDevice, so default-output
-  switching needs no external helper (svcl) after all — noted back into the plan.
+  switching needs no external helper (svcl) after all.
 """
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class PycawAudioBackend(AudioBackend):
         # manages the COM reference count correctly. GetSpeakers() already returns an
         # AudioDevice; GetMicrophone() returns a raw IMMDevice, so we wrap it with
         # CreateDevice(). A hand-rolled Activate()+cast() here mis-owned the pointer
-        # and caused access-violation crashes when GC ran (see BUILD-PLAN.md ch.1).
+        # and caused access-violation crashes when GC ran.
         if kind == "speaker":
             return self._AU.GetSpeakers().EndpointVolume
         return self._AU.CreateDevice(self._AU.GetMicrophone()).EndpointVolume
@@ -161,7 +161,7 @@ class PycawAudioBackend(AudioBackend):
         # IAudioMeterInformation.GetPeakValue is the same Activate()+QueryInterface
         # pattern pycaw uses for EndpointVolume (utils.AudioDevice.EndpointVolume),
         # so it manages the COM reference safely — unlike the hand-rolled cast that
-        # once crashed (BUILD-PLAN.md ch.1). GetSpeakers() returns an AudioDevice
+        # once crashed. GetSpeakers() returns an AudioDevice
         # (wrapping IMMDevice as ._dev); GetMicrophone() returns a raw IMMDevice.
         from pycaw.pycaw import IAudioMeterInformation
         raw = getattr(dev, "_dev", dev)

@@ -9,6 +9,7 @@ venv/
 # Build artifacts
 build/*/
 dist/
+release/
 *.spec.bak
 
 # Bundled binaries (fetched at package time, not committed)

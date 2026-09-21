@@ -1,9 +1,10 @@
 """aiohttp server: static web surface + /ws WebSocket with an auth gate.
 
-The message protocol (see BUILD-PLAN.md 3) flows over one persistent WebSocket:
+The message protocol flows over one persistent WebSocket:
 intents up, snapshots/state down. This module owns transport and the auth gate;
 it delegates the meaning of commands to a `controller` and authentication to an
-`authenticator`, both injected so phases P1/P2 extend without rewriting P0.
+`authenticator`, both injected so audio and security can be extended
+independently of the transport layer.
 """
 from __future__ import annotations
 
@@ -55,7 +56,7 @@ class Client:
 
 
 class Authenticator(Protocol):
-    """Gate for pre-auth messages. P0 uses NullAuth (open); P2 swaps in real pairing."""
+    """Gate for pre-auth messages. NullAuth (open) is the dev default; real pairing swaps in."""
 
     def requires_auth(self) -> bool: ...
 
@@ -65,7 +66,7 @@ class Authenticator(Protocol):
 
 
 class NullAuth:
-    """P0 authenticator: every connection is immediately trusted (single-machine dev)."""
+    """Dev-time authenticator: every connection is immediately trusted (single-machine)."""
 
     def requires_auth(self) -> bool:
         return False
@@ -80,7 +81,7 @@ ControllerFn = Callable[[Client, dict[str, Any]], Awaitable[None]]
 
 
 async def _default_controller(client: Client, msg: dict[str, Any]) -> None:
-    """P0 controller: answer ping and subscribe; unknown types get an error."""
+    """Fallback controller: answer ping and subscribe; unknown types get an error."""
     t = msg.get("t")
     if t == "ping":
         await client.send({"t": "pong"})

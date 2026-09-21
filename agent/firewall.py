@@ -4,7 +4,7 @@ Over USB everything tunnels through adb on localhost, so no firewall rule is eve
 needed. Over Wi-Fi the phone must reach the PC's LAN IP directly, and on a **Public**
 network profile Windows drops all unsolicited inbound by default — so the agent is
 unreachable until an inbound rule allows it. That was the single biggest reason the
-Wi-Fi path "didn't work" on-device (see docs/on-device-2026-09-05.md).
+Wi-Fi path "didn't work" in on-device testing.
 
 Adding a rule needs elevation, so — unlike autostart, which is deliberately HKCU-only —
 this is an explicit, one-time, user-initiated action: the PC window offers a button
