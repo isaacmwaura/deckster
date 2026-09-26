@@ -29,10 +29,12 @@ def test_allowlist_add_find_revoke(tmp_path):
     al = AllowList(path, salt)
     tok = new_token()
     al.add("dev-1", "Phone", hash_token(tok, salt))
+    al.rename("dev-1", "Xiaomi POCO F3")
 
     assert al.find_by_token(tok) == "dev-1"
     assert al.find_by_token("nope") is None
     assert [d["id"] for d in al.list_devices()] == ["dev-1"]
+    assert al.list_devices()[0]["name"] == "Xiaomi POCO F3"
 
     # persistence: a fresh instance reads the same file
     al2 = AllowList(path, salt)

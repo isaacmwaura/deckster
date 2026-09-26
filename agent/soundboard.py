@@ -61,22 +61,26 @@ class SoundboardRenderer:
         self._sd = None
 
     @staticmethod
-    def _find_device(sd, wanted: str, kind: str) -> str:
-        """Return the PortAudio device name matching a Windows endpoint label."""
+    def _find_device(sd, wanted: str, kind: str) -> int:
+        """Return the WASAPI device index matching a Windows endpoint label.
+
+        PortAudio exposes the same name through several host APIs, so passing a
+        matched name back to sounddevice makes stream creation ambiguous.
+        """
         wanted_folded = wanted.casefold()
         devices = sd.query_devices()
         # PortAudio exposes the same physical device through MME, DirectSound,
         # WDM-KS and WASAPI. The product contract is explicitly WASAPI, so never
         # accept a same-named legacy-host entry merely because it appeared first.
-        candidates = [d["name"] for d in devices
+        candidates = [(index, d["name"]) for index, d in enumerate(devices)
                       if d.get("max_" + kind + "_channels", 0) > 0
                       and "wasapi" in sd.query_hostapis(d["hostapi"])["name"].casefold()]
-        for name in candidates:
+        for index, name in candidates:
             if name.casefold() == wanted_folded:
-                return name
-        for name in candidates:
+                return index
+        for index, name in candidates:
             if wanted_folded in name.casefold() or name.casefold() in wanted_folded:
-                return name
+                return index
         raise RuntimeError(f"audio device not available to WASAPI: {wanted}")
 
     def start(self, input_name: str, voice_name: str, ears_name: str | None = None) -> None:
@@ -95,12 +99,14 @@ class SoundboardRenderer:
             self._voice_stream = sd.Stream(
                 device=(input_device, voice_device), channels=(1, 2),
                 samplerate=self.sample_rate, dtype="float32", callback=self._voice_callback,
+                extra_settings=sd.WasapiSettings(auto_convert=True),
             )
             self._voice_stream.start()
-            if ears_device:
+            if ears_device is not None:
                 self._ears_stream = sd.OutputStream(
                     device=ears_device, channels=2, samplerate=self.sample_rate,
                     dtype="float32", callback=self._ears_callback,
+                    extra_settings=sd.WasapiSettings(auto_convert=True),
                 )
                 self._ears_stream.start()
         except Exception:
@@ -130,9 +136,29 @@ class SoundboardRenderer:
                 self._clips[clip_id] = samples
         with self._lock:
             for bus, enabled in (("voice", voice), ("ears", ears)):
+                self._voices[bus] = [item for item in self._voices[bus]
+                                     if item["id"] != clip_id]
                 if enabled:
                     self._voices[bus].append({"id": clip_id, "samples": samples,
                                               "pos": 0, "gain": gain})
+
+    def test_tone(self, bus: str) -> None:
+        """Queue a quiet, short tone on exactly one configured output bus."""
+        if bus not in ("voice", "ears"):
+            raise ValueError("choose Voice or Ears")
+        if self._voice_stream is None or (bus == "ears" and self._ears_stream is None):
+            raise RuntimeError("Apply the route before testing this output")
+        np = self._np
+        length = int(self.sample_rate * 0.45)
+        seconds = np.arange(length, dtype=np.float32) / self.sample_rate
+        envelope = np.minimum(1, seconds / 0.02) * np.minimum(1, (0.45 - seconds) / 0.07)
+        samples = (np.sin(2 * np.pi * (660 if bus == "voice" else 440) * seconds)
+                   * envelope * 0.16).astype(np.float32)
+        with self._lock:
+            self._voices[bus] = [item for item in self._voices[bus]
+                                 if item["id"] != "__route_test__"]
+            self._voices[bus].append({"id": "__route_test__", "samples": samples,
+                                      "pos": 0, "gain": 1.0})
 
     def stop_all(self) -> None:
         with self._lock:
@@ -224,6 +250,7 @@ class SoundboardService:
         self._lock = threading.RLock()
         self._error = ""
         self._playing: set[str] = set()
+        self._duration_cache: dict[str, tuple[int, int, float]] = {}
         self._autostart_attempted = False
         self.defaults_root = defaults_root or (resource_root() / DEFAULT_PACK_DIR)
         self._data = self._load()
@@ -282,11 +309,32 @@ class SoundboardService:
         try:
             manifest = self._default_manifest()
             if int(self._data.get("defaultPackVersion", 0)) < manifest["version"]:
-                self.restore_defaults(reset=True, manifest=manifest)
+                if int(self._data.get("defaultPackVersion", 0)) == 0:
+                    self.restore_defaults(reset=True, manifest=manifest)
+                else:
+                    self._upgrade_default_pack(manifest)
         except FileNotFoundError:
             log.info("no bundled default sound pack found")
         except Exception as exc:  # noqa: BLE001 - custom clips must still remain usable
             log.warning("default sound pack was not installed: %s", exc)
+
+    def _upgrade_default_pack(self, manifest: dict[str, Any]) -> None:
+        """Refresh installed default audio without resurrecting removed pads."""
+        old_gains = {"applause": .72, "success": .78, "wrong": .76,
+                     "bell": .76, "pop": .82}
+        with self._lock:
+            for clip in self._data["clips"]:
+                entry = next((item for item in manifest["clips"]
+                              if item["key"] == clip.get("defaultKey")), None)
+                if entry is None:
+                    continue
+                source = self.defaults_root / str(entry["file"])
+                shutil.copy2(source, self.clips_dir / str(clip["file"]))
+                if (clip.get("defaultKey") in old_gains and
+                        clip.get("gain") == old_gains[clip["defaultKey"]]):
+                    clip["gain"] = _clamp(entry.get("gain", clip["gain"]))
+            self._data["defaultPackVersion"] = int(manifest["version"])
+            self._save()
 
     def restore_defaults(self, reset: bool = True,
                          manifest: dict[str, Any] | None = None) -> int:
@@ -336,10 +384,30 @@ class SoundboardService:
             playing = self._playing
             if self._renderer is not None and hasattr(self._renderer, "playing_ids"):
                 playing = self._renderer.playing_ids()
-            return {"clips": [dict(c, playing=c["id"] in playing) for c in self._data["clips"]],
+            return {"clips": [dict(c, playing=c["id"] in playing,
+                                   duration=self._clip_duration(c)) for c in self._data["clips"]],
                     "config": dict(self._data["config"]), "configured": configured,
                     "runtime": "ready" if self._renderer else "setup_required",
                     "error": self._error, "outputs": outputs or [], "inputs": inputs or []}
+
+    def _clip_duration(self, clip: dict[str, Any]) -> float:
+        """Read clip length for the phone's playback indicator."""
+        path = self.clips_dir / str(clip.get("file", ""))
+        try:
+            stat = path.stat()
+            cached = self._duration_cache.get(str(path))
+            if cached and cached[:2] == (stat.st_size, stat.st_mtime_ns):
+                return cached[2]
+            if path.suffix.lower() == ".wav":
+                with wave.open(str(path), "rb") as source:
+                    duration = source.getnframes() / source.getframerate()
+            else:
+                import soundfile as sf
+                duration = float(sf.info(str(path)).duration)
+            self._duration_cache[str(path)] = (stat.st_size, stat.st_mtime_ns, duration)
+            return duration
+        except (OSError, ValueError, RuntimeError, ImportError, wave.Error):
+            return 0.0
 
     def import_clip(self, source: Path, label: str | None = None,
                     voice: bool = True, ears: bool = False, gain: float = 1.0) -> dict[str, Any]:
@@ -384,6 +452,17 @@ class SoundboardService:
 
     def configure(self, config: dict[str, Any], outputs: list[dict[str, Any]],
                   inputs: list[dict[str, Any]]) -> None:
+        # Phone navigation preferences must not reopen streams or overwrite a
+        # route that was just changed on the desktop.
+        if "layout" in config and not any(key in config for key in
+                                          ("inputId", "voiceOutputId", "earsOutputId")):
+            layout = str(config["layout"]).lower()
+            if layout not in ("a", "b"):
+                raise ValueError("soundboard layout must be A or B")
+            with self._lock:
+                self._data["config"]["layout"] = layout
+                self._save()
+            return
         output_map = {str(d.get("id")): str(d.get("name")) for d in outputs}
         input_map = {str(d.get("id")): str(d.get("name")) for d in inputs}
         values = {key: str(config.get(key, self._data["config"].get(key, "")))
@@ -450,6 +529,12 @@ class SoundboardService:
             if self._renderer:
                 self._renderer.stop_all()
             self._playing.clear()
+
+    def test_tone(self, bus: str) -> None:
+        with self._lock:
+            if self._renderer is None:
+                raise RuntimeError(self._error or "Apply the routing first")
+            self._renderer.test_tone(bus)
 
     def close(self) -> None:
         with self._lock:

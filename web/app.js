@@ -346,6 +346,13 @@
   // localStorage as before. The server authenticates by token alone (find_by_token),
   // so the same token works on any origin.
   function nativeBridge() { try { return window.AndroidBridge || null; } catch (e) { return null; } }
+  function deviceName() {
+    var bridge = nativeBridge();
+    if (bridge && bridge.getDeviceName) {
+      try { return bridge.getDeviceName() || "Android phone"; } catch (e) {}
+    }
+    return "Phone browser";
+  }
   // Tell the native shell the PC became unreachable (e.g. the USB cable was pulled).
   // The page keeps retrying, but the shell can offer to persist the session over
   // Wi-Fi if the PC is still on the LAN. Fires once per outage; reset on reconnect.
@@ -381,7 +388,7 @@
     ws = new WebSocket(wsUrl());
     ws.onopen = function () {
       reconnectDelay = 500;
-      send({ t: "hello", token: getToken() });
+      send({ t: "hello", token: getToken(), deviceName: nativeBridge() ? deviceName() : "" });
       pingTimer = setInterval(function () { pingSentAt = Date.now(); send({ t: "ping" }); }, 5000);
     };
     ws.onmessage = function (ev) { var m; try { m = JSON.parse(ev.data); } catch (e) { return; } handle(m); };
@@ -400,7 +407,7 @@
       case "need_pair":
         model.paired = false; updateChrome();
         // Auto-pair from the scanned QR code; otherwise show the keypad.
-        if (urlPairCode && !urlPairTried) { urlPairTried = true; send({ t: "pair", code: urlPairCode, device: { id: deviceId(), name: "Phone" } }); }
+        if (urlPairCode && !urlPairTried) { urlPairTried = true; send({ t: "pair", code: urlPairCode, device: { id: deviceId(), name: deviceName() } }); }
         else showPair(true);
         return;
       case "pair_ok": setToken(m.token); stripPairParam(); stopScan(); showPair(false); send({ t: "subscribe" }); return;
@@ -924,20 +931,19 @@
       opt.selected = d.id === selected; node.appendChild(opt);
     });
   }
+  var soundboardSetupOpen = false, padStarted = {};
+  function setSoundboardSetup(open) {
+    soundboardSetupOpen = open;
+    $("soundboard").classList.toggle("setup-open", open);
+    $("soundboard-setup-toggle").setAttribute("aria-expanded", String(open));
+    $("soundboard-setup-toggle").textContent = open ? "Hide setup" : "Setup";
+  }
   function renderSoundboard() {
     var sb = model.soundboard || {}, cfg = sb.config || {};
-    fillSoundboardSelect($("soundboard-input"), sb.inputs || [], cfg.inputId || "", "Choose microphone");
-    fillSoundboardSelect($("soundboard-voice"), sb.outputs || [], cfg.voiceOutputId || "", "Choose virtual Voice endpoint");
-    fillSoundboardSelect($("soundboard-ears"), sb.outputs || [], cfg.earsOutputId || "", "No monitor output");
     if ($("soundboard-layout")) $("soundboard-layout").value = cfg.layout === "b" ? "b" : "a";
     var stat = $("soundboard-status"), err = $("soundboard-error");
-    if (stat) stat.textContent = sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Setup required";
+    if (stat) stat.textContent = sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Set up routing on your PC";
     if (err) err.textContent = sb.error || "";
-    var driver = $("soundboard-driver-hint");
-    if (driver) {
-      var hasCable = (sb.outputs || []).some(function (d) { return /cable input/i.test(d.name || ""); });
-      driver.textContent = hasCable ? "VB-Cable detected. Choose CABLE Input for Voice; set CABLE Output as the microphone in your call or game." : "VB-Cable was not detected. Install it separately, then choose CABLE Input for Voice. Deckster never bundles the driver.";
-    }
     var pads = $("soundboard-pads"); if (!pads) return;
     pads.innerHTML = "";
     var clips = sb.clips || [];
@@ -955,18 +961,36 @@
       var buses = el("span", "sound-pad-buses");
       if (clip.voice) { var v = el("span", "sound-pad-bus"); v.textContent = "VOICE"; buses.appendChild(v); }
       if (clip.ears) { var e = el("span", "sound-pad-bus ears"); e.textContent = "EARS"; buses.appendChild(e); }
-      pad.appendChild(icon); pad.appendChild(name); pad.appendChild(buses); pads.appendChild(pad);
+      var progress = el("span", "sound-pad-progress");
+      var started = padStarted[clip.id], duration = Number(clip.duration) || 0;
+      if (clip.playing && duration > 0 && !started) started = padStarted[clip.id] = Date.now();
+      var elapsed = started ? (Date.now() - started) / 1000 : duration;
+      if (started && elapsed < duration) {
+        progress.style.animationDuration = duration + "s";
+        progress.style.animationDelay = "-" + elapsed + "s";
+        progress.classList.add("active");
+      } else if (elapsed >= duration && !clip.playing) delete padStarted[clip.id];
+      pad.appendChild(icon); pad.appendChild(name); pad.appendChild(buses);
+      pad.appendChild(progress); pads.appendChild(pad);
     });
   }
   function bindSoundboardPad(pad, clip) {
-    var timer = null, held = false;
+    var timer = null, held = false, downX = 0, downY = 0;
     function clear() { if (timer) { clearTimeout(timer); timer = null; } }
-    function start() { held = false; clear(); timer = setTimeout(function () { held = true; openSoundboardEditor(clip); buzz(HAPTIC.hold); }, 550); }
+    function start(e) {
+      held = false; clear(); downX = e.clientX; downY = e.clientY;
+      timer = setTimeout(function () { held = true; openSoundboardEditor(clip); buzz(HAPTIC.hold); }, 1100);
+    }
     function end() { clear(); }
     pad.addEventListener("pointerdown", start); pad.addEventListener("pointerup", end);
+    pad.addEventListener("pointermove", function (e) {
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 12) clear();
+    });
     pad.addEventListener("pointercancel", clear); pad.addEventListener("pointerleave", clear);
     pad.onclick = function () {
       if (held) { held = false; return; }
+      padStarted[clip.id] = Date.now();
+      renderSoundboard();
       send({ t: "soundboard_play", clipId: clip.id }); buzz(HAPTIC.tap); nudgeActivity();
     };
   }
@@ -992,11 +1016,7 @@
     send({ t: "soundboard_remove_clip", clipId: model.soundboardEditingId }); closeSoundboardEditor(); buzz(HAPTIC.mute);
   }
   function saveSoundboardConfig() {
-    var cfg = (model.soundboard || {}).config || {};
     send({ t: "soundboard_config", config: {
-      inputId: $("soundboard-input").value,
-      voiceOutputId: $("soundboard-voice").value,
-      earsOutputId: $("soundboard-ears").value,
       layout: $("soundboard-layout").value || "a"
     }});
     buzz(HAPTIC.tap); nudgeActivity();
@@ -1010,6 +1030,7 @@
     model.soundboardOpen = true;
     var layout = ((model.soundboard || {}).config || {}).layout === "b" ? " layout-b" : "";
     $("soundboard").className = "soundboard" + layout + " open";
+    setSoundboardSetup(!((model.soundboard || {}).configured));
     $("soundboard").setAttribute("aria-hidden", "false"); renderSoundboard(); buzz(HAPTIC.tap); nudgeActivity();
   }
   function closeSoundboard() {
@@ -1021,15 +1042,19 @@
   // Media opens with a swipe UP from the bottom edge in BOTH orientations, and
   // closes with a swipe down. Bottom-edge + vertical keeps it clear of the
   // Mixer/Devices pager (horizontal) — no gesture conflict.
-  var tsX = 0, tsY = 0, tsT = 0;
-  function onTouchStart(e) { var t = e.touches && e.touches[0]; if (!t) return; tsX = t.clientX; tsY = t.clientY; tsT = Date.now(); }
+  var tsX = 0, tsY = 0, tsT = 0, tsBlocked = false;
+  function onTouchStart(e) {
+    var t = e.touches && e.touches[0]; if (!t) return;
+    tsX = t.clientX; tsY = t.clientY; tsT = Date.now();
+    tsBlocked = !!(e.target.closest && e.target.closest("button, input, select, label, .soundboard-setup, .soundboard-pads"));
+  }
   function onTouchEnd(e) {
     var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
-    var dx = t.clientX - tsX, dy = t.clientY - tsY; if (Date.now() - tsT > 800) return;
-    var H = window.innerHeight, EDGE = 90, TH = 55;
+    var dx = t.clientX - tsX, dy = t.clientY - tsY; if (Date.now() - tsT > 800 || tsBlocked) return;
+    var H = window.innerHeight, EDGE = 90, TH = model.soundboardOpen ? 110 : 55;
     var layoutB = (((model.soundboard || {}).config || {}).layout === "b");
     if (model.soundboardOpen) {
-      if ((layoutB && dx < -TH && Math.abs(dx) > Math.abs(dy)) || (!layoutB && dy > TH && Math.abs(dy) > Math.abs(dx))) closeSoundboard();
+      if ((layoutB && dx < -TH && Math.abs(dx) > Math.abs(dy) * 1.5) || (!layoutB && dy > TH && Math.abs(dy) > Math.abs(dx) * 1.5)) closeSoundboard();
     } else if (!model.mediaOpen) {
       if (tsY >= H - EDGE && dy < -TH && Math.abs(dy) > Math.abs(dx)) openMedia();
       else if (layoutB && dx > TH && Math.abs(dx) > Math.abs(dy)) openSoundboard();
@@ -1132,7 +1157,7 @@
         var code = extractPairCode(codes[0].rawValue);
         if (code) {
           buzz(HAPTIC.tap); scanning = false;   // pause so we don't re-submit every frame
-          send({ t: "pair", code: code, device: { id: deviceId(), name: "Phone" } });
+          send({ t: "pair", code: code, device: { id: deviceId(), name: deviceName() } });
           setTimeout(function () {               // pair_ok closes the scanner; if it's still open, it failed
             var sc = $("scanner");
             if (sc && sc.className.indexOf("hidden") < 0 && scanStream) {
@@ -1240,7 +1265,7 @@
     $("tab-soundboard").onclick = openSoundboard;
     $("pager").addEventListener("scroll", function (e) { var el = e.currentTarget, idx = Math.round(el.scrollLeft / el.clientWidth); if (idx !== model.page) setPage(idx); });
     // pairing
-    $("pair-go").onclick = function () { if (pairCode.length === 6) send({ t: "pair", code: pairCode, device: { id: deviceId(), name: "Phone" } }); };
+    $("pair-go").onclick = function () { if (pairCode.length === 6) send({ t: "pair", code: pairCode, device: { id: deviceId(), name: deviceName() } }); };
     // in-app QR scanner (only offered when the browser can actually scan)
     if ($("pair-scan")) {
       if (scanSupported()) $("pair-scan").onclick = startScan;
@@ -1267,7 +1292,8 @@
     if ($("media-up")) $("media-up").onclick = closeMedia;   // chevron: back up to mixer
     if ($("media-list")) $("media-list").addEventListener("scroll", updateMediaDots, { passive: true });
     if ($("soundboard-back")) $("soundboard-back").onclick = closeSoundboard;
-    if ($("soundboard-stop")) $("soundboard-stop").onclick = function () { send({ t: "soundboard_stop_all" }); buzz(HAPTIC.mute); nudgeActivity(); };
+    if ($("soundboard-stop")) $("soundboard-stop").onclick = function () { padStarted = {}; send({ t: "soundboard_stop_all" }); buzz(HAPTIC.mute); nudgeActivity(); };
+    $("soundboard-setup-toggle").onclick = function () { setSoundboardSetup(!soundboardSetupOpen); };
     if ($("soundboard-save")) $("soundboard-save").onclick = saveSoundboardConfig;
     if ($("soundboard-restore")) $("soundboard-restore").onclick = restoreSoundboardDefaults;
     if ($("soundboard-edit-save")) $("soundboard-edit-save").onclick = saveSoundboardEditor;

@@ -1,6 +1,7 @@
 package com.streamcontrol.shell
 
 import android.webkit.JavascriptInterface
+import android.os.Build
 
 /**
  * Exposed to the web control surface as `window.AndroidBridge`. It lets the page
@@ -27,6 +28,17 @@ class DeckBridge(
 
     @JavascriptInterface
     fun getDeviceId(): String = store.deviceId()
+
+    @JavascriptInterface
+    fun getDeviceName(): String {
+        val maker = Build.MANUFACTURER.orEmpty().trim()
+        val model = Build.MODEL.orEmpty().trim()
+        return when {
+            model.isBlank() -> "Android phone"
+            maker.isBlank() || model.startsWith(maker, ignoreCase = true) -> model
+            else -> "$maker $model"
+        }.take(48)
+    }
 
     @JavascriptInterface
     fun setDeviceId(id: String) { store.seedDeviceId(id) }

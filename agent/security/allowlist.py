@@ -50,6 +50,11 @@ class AllowList:
             return True
         return False
 
+    def rename(self, device_id: str, name: str) -> None:
+        if device_id in self._devices and name and name != self._devices[device_id]["name"]:
+            self._devices[device_id]["name"] = name[:60]
+            self._save()
+
     def revoke_all(self) -> None:
         self._devices = {}
         self._save()

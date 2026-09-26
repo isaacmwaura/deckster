@@ -37,6 +37,10 @@ class DeviceAuthenticator:
         token = msg.get("token")
         device_id = self._allow.find_by_token(token) if token else None
         if device_id:
+            # A valid token authorizes the paired device to update its display name.
+            name = str(msg.get("deviceName") or "").strip()
+            if name:
+                self._allow.rename(device_id, name)
             client.authed = True
             client.device_id = device_id
             log.info("device authed via token: %s", device_id)

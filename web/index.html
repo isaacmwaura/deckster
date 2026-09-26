@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="stylesheet" href="/static/style.css?v=24">
+  <link rel="stylesheet" href="/static/style.css?v=25">
 </head>
 <body>
   <div id="app" class="app">
@@ -170,22 +170,19 @@
         <header class="soundboard-topbar">
           <button id="soundboard-back" class="soundboard-back" aria-label="Back to mixer">‹ <span>Mixer</span></button>
           <div><div class="soundboard-title">Soundboard</div><div id="soundboard-status" class="soundboard-status">Set up a routing endpoint</div></div>
+          <button id="soundboard-setup-toggle" class="soundboard-setup-toggle" aria-controls="soundboard-setup" aria-expanded="false">Setup</button>
           <button id="soundboard-stop" class="soundboard-stop">■ Stop all</button>
         </header>
         <div class="soundboard-body">
           <section id="soundboard-setup" class="soundboard-setup">
-            <div class="soundboard-setup-title">Configuration B</div>
-            <p id="soundboard-driver-hint">Mix your mic and pads into one shared virtual microphone. Select <b>CABLE Input</b> as Voice after installing VB-Cable; use <b>CABLE Output</b> as your mic in Discord or your game.</p>
-            <label>Physical microphone <select id="soundboard-input"></select></label>
-            <label>Voice endpoint <select id="soundboard-voice"></select></label>
-            <label>Monitor endpoint <select id="soundboard-ears"></select></label>
+            <div class="soundboard-setup-title">Soundboard options</div>
+            <p>Set up the microphone, virtual cable, and monitor in Deckster on your PC. Open <b>Soundboard → Audio routing</b> to see and test the connections.</p>
             <label>Navigation layout <select id="soundboard-layout"><option value="a">A — soundboard above Mixer</option><option value="b">B — soundboard left of Mixer</option></select></label>
-            <button id="soundboard-save" class="soundboard-save">Apply routing</button>
+            <button id="soundboard-save" class="soundboard-save">Save layout</button>
             <button id="soundboard-restore" class="soundboard-restore">Restore 12 starter sounds</button>
             <p id="soundboard-error" class="soundboard-error"></p>
           </section>
           <section class="soundboard-pads-wrap">
-            <div class="soundboard-pads-head"><span>PADS</span><span id="soundboard-pad-hint">Add clips from the Deckster desktop app</span></div>
             <div id="soundboard-pads" class="soundboard-pads"></div>
           </section>
         </div>
@@ -210,6 +207,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=24"></script>
+  <script src="/static/app.js?v=26"></script>
 </body>
 </html>

@@ -17,11 +17,28 @@ from typing import Any
 class Admin:
     """Bundles the settings actions over the live Runtime, pairing, and allow-list."""
 
-    def __init__(self, runtime, pairing, allowlist, fingerprint: str = "") -> None:
+    def __init__(self, runtime, pairing, allowlist, fingerprint: str = "",
+                 audio_state=None, soundboard=None) -> None:
         self._rt = runtime
         self._pairing = pairing
         self._allow = allowlist
         self._fingerprint = fingerprint
+        self._audio_state = audio_state
+        self._soundboard = soundboard
+
+    def soundboard_state(self) -> dict[str, Any]:
+        if self._audio_state is None or self._soundboard is None:
+            return {"config": {}, "inputs": [], "outputs": [], "runtime": "unavailable", "error": ""}
+        devices = self._audio_state.devices
+        return self._soundboard.snapshot(devices.get("outputs", []), devices.get("inputs", []))
+
+    def configure_soundboard(self, config: dict[str, Any]) -> dict[str, Any]:
+        devices = self._audio_state.devices
+        self._soundboard.configure(config, devices.get("outputs", []), devices.get("inputs", []))
+        return self.soundboard_state()
+
+    def test_soundboard_route(self, bus: str) -> None:
+        self._soundboard.test_tone(bus)
 
     def state(self) -> dict[str, Any]:
         """A snapshot for the settings page. Never raises — degrades to defaults."""

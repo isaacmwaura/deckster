@@ -323,6 +323,8 @@ def main() -> None:
     parser.add_argument("--mode", choices=["loopback", "lan"], default=None,
                         help="override bind mode")
     parser.add_argument("--no-tray", action="store_true", help="do not start the tray icon")
+    parser.add_argument("--start-hidden", action="store_true",
+                        help="start in the system tray without opening the control panel")
     parser.add_argument("--mock", action="store_true",
                         help="use the in-memory mock audio backend (headless testing)")
     args = parser.parse_args()
@@ -373,7 +375,8 @@ def main() -> None:
     # both opens the page and pairs in one step. Regenerated when the code changes.
     runtime = Runtime(mode, port, pairing, settings, ssl_ctx=ssl_ctx, advertiser=advertiser)
     # Settings surface (localhost-only): the .exe's control panel.
-    admin = Admin(runtime, pairing, allowlist, fingerprint=fingerprint)
+    admin = Admin(runtime, pairing, allowlist, fingerprint=fingerprint,
+                  audio_state=state, soundboard=soundboard)
 
     # Safety: LAN mode exposes the agent to the network and has no TLS yet.
     if runtime.mode == "lan":
@@ -399,7 +402,7 @@ def main() -> None:
         # Deckster's own window (its own UI thread) + a tray icon for the background.
         icon_png = str(resource_root() / "web" / "icon-64.png")
         threading.Thread(target=run_window,
-                         args=(admin, stop_thread, cmd_queue, icon_png, soundboard),
+                         args=(admin, stop_thread, cmd_queue, icon_png, soundboard, args.start_hidden),
                          daemon=True).start()
         threading.Thread(target=_start_tray,
                         args=(stop_thread, runtime, pairing, allowlist, cmd_queue),

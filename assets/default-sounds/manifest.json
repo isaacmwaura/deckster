@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "license": "CC0-1.0",
   "clips": [
     {
@@ -29,8 +29,8 @@
       "emoji": "\ud83d\udc4f",
       "voice": true,
       "ears": true,
-      "gain": 0.72,
-      "sha256": "a198e24b313d7f0896973bf2a95b945a3d74a0f50dad06210ec0cf5883b17304"
+      "gain": 0.9,
+      "sha256": "56336a4dec09c0cf54f029e801c5d624e5dad5516d3c3aa434f3b58fea6218e5"
     },
     {
       "key": "air-horn",
@@ -89,7 +89,7 @@
       "emoji": "\u2705",
       "voice": true,
       "ears": true,
-      "gain": 0.78,
+      "gain": 0.95,
       "sha256": "d6df98d21d39ce3224ce59cfd0d19c2c07da6fb07d27d6a67f577657c0531b73"
     },
     {
@@ -99,7 +99,7 @@
       "emoji": "\u274c",
       "voice": true,
       "ears": true,
-      "gain": 0.76,
+      "gain": 0.9,
       "sha256": "8fe43ffb9d9bc76dba616520f78dbf1ce8cc05d615d25225aa77134b2082e3b1"
     },
     {
@@ -109,7 +109,7 @@
       "emoji": "\ud83d\udd14",
       "voice": true,
       "ears": true,
-      "gain": 0.76,
+      "gain": 0.9,
       "sha256": "ec8b9a54297146818c23949404135b2e91c8d49be5e0ae52225166f83dfc46ae"
     },
     {
@@ -119,7 +119,7 @@
       "emoji": "\ud83e\udee7",
       "voice": true,
       "ears": true,
-      "gain": 0.82,
+      "gain": 0.95,
       "sha256": "81ba0ba308ab2b1de20ddf0038c04b6e2aa6a6e3929c54cc74f838f75794f13a"
     }
   ]

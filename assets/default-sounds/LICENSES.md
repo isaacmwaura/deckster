@@ -33,9 +33,19 @@ These become `success.wav`, `wrong.wav`, `record-scratch.wav`, `pop.wav`, and
 ## Deckster synthesized sounds
 
 `air-horn.wav`, `rimshot.wav`, `sad-trombone.wav`, `drum-roll.wav`,
-`censor-bleep.wav`, and `applause.wav` are deterministic, original synthesis
+and `censor-bleep.wav` are deterministic, original synthesis
 created by `tools/build_default_sound_pack.py` specifically for Deckster. They
 are dedicated to the public domain under CC0 1.0.
+
+## Applause recording
+
+- Creator: eXpl0it3r
+- License: CC0 1.0
+- Official page: https://opengameart.org/content/applause-in-a-large-hall-or-church
+- Reviewed download: `applause-clapping-church-crowd-immersive.wav`
+- Download SHA-256: `0d3bfde5a050f3c5e6685bd7f1efc7ab1d289fbad65c88c1ce9b4691228c69c9`
+- Deckster changes: four-second excerpt beginning at five seconds, converted to
+  mono 48 kHz PCM WAV, peak-normalized, and edge-faded.
 
 Deckster is not affiliated with or endorsed by Discord. These are independent
 recordings and synthesized effects, not copies of Discord's sound assets.

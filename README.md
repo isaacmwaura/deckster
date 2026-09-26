@@ -112,9 +112,11 @@ integration. Windows needs a virtual audio endpoint for this; the current releas
 2. In the Deckster PC control panel, open **Soundboard** and import WAV, MP3, OGG, or
    FLAC clips. Deckster installs 12 starter sounds automatically; **Restore 12 starter
    sounds** brings them back without touching your own imports.
-3. On the phone's soundboard page, choose your physical microphone and select
+3. In the desktop **Soundboard → Audio routing** panel, choose your physical microphone and select
    **CABLE Input** as the **Voice** output. Optionally select your headphones/speakers
-   for **Ears** monitoring.
+   for **Ears** monitoring, then click **Apply routing**. The diagram explains both
+   ends of the cable. **Test Voice** sends a short tone to the virtual microphone;
+   **Test Ears** plays a short tone on your monitor output.
 4. In Discord, your game, or OBS, select **CABLE Output** as the microphone.
 
 Your clip assignments, gain, routing, selected endpoints, and navigation layout persist
