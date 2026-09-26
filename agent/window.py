@@ -192,7 +192,7 @@ class DecksterWindow:
             self.root.withdraw()
         self.root.title("Deckster")
         self.root.configure(bg=BG)
-        self.root.geometry("900x700")
+        self.root.geometry(f"1000x{min(820, max(640, self.root.winfo_screenheight() - 100))}")
         self.root.minsize(840, 640)
         self._icon_img = None
         if icon_path:
@@ -230,6 +230,7 @@ class DecksterWindow:
         self._nav = {}
         for key, glyph, label in (("connect", "▦", "Connect"),
                                   ("devices", "☷", "Devices"),
+                                  ("routing", "⇄", "Audio routing"),
                                   ("soundboard", "♪", "Soundboard"),
                                   ("settings", "⚙", "Settings"),
                                   ("about", "ⓘ", "About")):
@@ -268,6 +269,7 @@ class DecksterWindow:
         self.sections = {
             "connect": self._build_connect(),
             "devices": self._build_devices(),
+            "routing": self._build_routing(),
             "soundboard": self._build_soundboard(),
             "settings": self._build_settings(),
             "about": self._build_about(),
@@ -313,7 +315,7 @@ class DecksterWindow:
         self.sections[key].pack(fill="both", expand=True)
         self.active_section = key
         self.page_title.config(text={"connect": "Connect a phone", "devices": "Paired devices",
-                                     "soundboard": "Soundboard", "settings": "Settings",
+                                     "routing": "Audio routing", "soundboard": "Soundboard", "settings": "Settings",
                                      "about": "About Deckster"}.get(key, "Deckster"))
         for k, n in self._nav.items():
             active = k == key
@@ -413,54 +415,17 @@ class DecksterWindow:
                  bg=BG, fg=SUB, font=("Segoe UI", 8)).pack(fill="x", pady=(12, 0))
         return f
 
-    def _build_soundboard(self):
-        """Route editor and clip library for the PC's audio endpoints."""
-        import tkinter as tk
-        from tkinter import ttk
+    def _build_routing(self):
+        from .routing_panel import RoutingPanel
+        self.routing_panel = RoutingPanel(self.content, self.admin)
+        return self.routing_panel
 
+    def _build_soundboard(self):
+        """Clip library; device setup has its own guided routing page."""
+        import tkinter as tk
         f = tk.Frame(self.content, bg=BG)
-        tk.Label(f, text="AUDIO ROUTING", bg=BG, fg=INK,
-                 font=("Segoe UI Semibold", 15)).pack(anchor="w", pady=(2, 2))
-        tk.Label(f, text="Connect your microphone and pads to a virtual mic, with optional local monitoring.",
-                 bg=BG, fg=INK2, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
-        route = tk.Frame(f, bg=CARD, highlightthickness=1, highlightbackground=LINE)
-        route.pack(fill="x")
-        self.route_canvas = tk.Canvas(route, height=146, bg=CARD, highlightthickness=0)
-        self.route_canvas.pack(fill="x", padx=12, pady=(8, 2))
-        self.route_canvas.bind("<Configure>", lambda _e: self._draw_route())
-        selectors = tk.Frame(route, bg=CARD)
-        selectors.pack(fill="x", padx=14)
-        self._route_boxes = {}
-        for col, (key, label) in enumerate((("inputId", "MICROPHONE · SOURCE"),
-                                            ("voiceOutputId", "VOICE · VIRTUAL CABLE"),
-                                            ("earsOutputId", "EARS · MONITOR"))):
-            cell = tk.Frame(selectors, bg=CARD)
-            cell.grid(row=0, column=col, sticky="ew", padx=(0, 10) if col < 2 else 0)
-            selectors.grid_columnconfigure(col, weight=1)
-            tk.Label(cell, text=label, bg=CARD, fg=SUB,
-                     font=("Segoe UI", 8, "bold")).pack(anchor="w", pady=(0, 4))
-            box = ttk.Combobox(cell, state="readonly", width=22)
-            box.pack(fill="x")
-            self._route_boxes[key] = box
-        self._route_options = {}
-        self._route_signature = None
-        self._route_dirty = False
-        for box in self._route_boxes.values():
-            box.bind("<<ComboboxSelected>>", lambda _e: self._route_changed())
-        controls = tk.Frame(route, bg=CARD)
-        controls.pack(fill="x", padx=14, pady=(12, 12))
-        PillButton(controls, "Apply routing", self._apply_route, kind="primary",
-                   width=145, height=34, bg=CARD).pack(side="left")
-        PillButton(controls, "Test Voice", lambda: self._test_route("voice"),
-                   width=112, height=34, bg=CARD).pack(side="left", padx=(10, 0))
-        PillButton(controls, "Test Ears", lambda: self._test_route("ears"),
-                   width=112, height=34, bg=CARD).pack(side="left", padx=(8, 0))
-        self.route_status = tk.Label(route, text="Choose devices, then apply routing.",
-                                     bg=CARD, fg=SUB, font=("Segoe UI", 9), anchor="w")
-        self.route_status.pack(fill="x", padx=14, pady=(0, 8))
-        tk.Label(f, text="Voice goes into the virtual cable. In your call or game, choose its recording side (usually CABLE Output) as the microphone. Ears plays locally.",
-                 bg=BG, fg=SUB, font=("Segoe UI", 8), wraplength=630,
-                 justify="left", anchor="w").pack(fill="x", pady=(8, 12))
+        PillButton(f, "Open audio routing", lambda: self._show_section("routing"),
+                   width=185, bg=BG).pack(anchor="w", pady=(0, 12))
         tk.Label(f, text="SOUNDBOARD CLIPS", bg=BG, fg=SUB,
                  font=("Segoe UI", 8, "bold")).pack(fill="x", pady=(0, 6))
         card = tk.Frame(f, bg=CARD, highlightthickness=1,
@@ -482,94 +447,11 @@ class DecksterWindow:
         PillButton(defaults, "Restore 12 starter sounds", self._restore_soundboard_defaults,
                    width=190, height=32, bg=CARD, radius=9).pack(side="left")
         self.soundboard_note = tk.Label(
-            f, text="Clip icons and Voice/Ears destinations appear on the phone. Clips are stored on this PC.",
+            f, text="Others = your call/game. Me = your headphones/speakers. Choose each clip’s destinations on the phone.",
             bg=BG, fg=SUB, font=("Segoe UI", 8), justify="left", anchor="w", wraplength=420,
         )
         self.soundboard_note.pack(fill="x", pady=(9, 0))
         return f
-
-    def _draw_route(self):
-        cv = self.route_canvas
-        cv.delete("all")
-        w = max(cv.winfo_width(), 570)
-        xs = [w * fraction for fraction in (0.11, 0.36, 0.62, 0.88)]
-        nodes = (("MIC", "Physical input", ACCENT),
-                 ("MIX", "Mic + pads", INK),
-                 ("VIRTUAL IN", "e.g. CABLE Input", GREEN),
-                 ("VIRTUAL MIC", "e.g. CABLE Output", GREEN))
-        for i, (x, (title, sub, color)) in enumerate(zip(xs, nodes)):
-            left, right = x - (62 if i > 1 else 54), x + (62 if i > 1 else 54)
-            _round(cv, left, 25, right, 84, 12, fill=CARD2, outline=color)
-            cv.create_text(x, 46, text=title, fill=color,
-                           font=("Segoe UI", 9, "bold"))
-            cv.create_text(x, 68, text=sub, fill=SUB, font=("Segoe UI", 8))
-            if i:
-                previous_right = xs[i - 1] + (62 if i - 1 > 1 else 54)
-                cv.create_line(previous_right + 4, 55, left - 6, 55,
-                               fill=color, width=3, arrow="last", arrowshape=(9, 11, 5))
-        cv.create_text(xs[-1], 98, text="Choose this as mic in a call or game",
-                       fill=SUB, font=("Segoe UI", 8))
-        cv.create_line(xs[1], 88, xs[1], 115, fill=AMBER, width=2, arrow="last")
-        cv.create_text(xs[1] + 8, 130, text="EARS  →  local speakers / headphones",
-                       anchor="w", fill=AMBER, font=("Segoe UI", 8, "bold"))
-
-    def _route_changed(self):
-        self._route_dirty = True
-        self.route_status.config(text="Route changed · Apply routing to connect these devices.", fg=AMBER)
-        self._draw_route()
-
-    def _fill_route(self):
-        if self.soundboard is None:
-            return
-        snap = self.admin.soundboard_state()
-        cfg = snap.get("config", {})
-        signature = (tuple((d.get("id"), d.get("name")) for d in snap.get("inputs", [])),
-                     tuple((d.get("id"), d.get("name")) for d in snap.get("outputs", [])),
-                     tuple(cfg.get(k, "") for k in self._route_boxes))
-        if signature != self._route_signature and not self._route_dirty:
-            self._route_signature = signature
-            for key, box in self._route_boxes.items():
-                devices = snap.get("inputs" if key == "inputId" else "outputs", [])
-                options = [("", "Choose a microphone" if key == "inputId" else
-                            "Choose a virtual output" if key == "voiceOutputId" else "Off · no monitor")]
-                options += [(str(d.get("id")), str(d.get("name"))) for d in devices]
-                self._route_options[key] = options
-                box["values"] = [label for _, label in options]
-                index = next((i for i, (id_, _) in enumerate(options)
-                              if id_ == str(cfg.get(key, ""))), 0)
-                box.current(index)
-        error = snap.get("error")
-        if error:
-            self.route_status.config(text="Audio setup: " + str(error), fg=RED)
-        elif not self._route_dirty:
-            ready = snap.get("runtime") == "ready"
-            self.route_status.config(text="Connected · microphone and pads are routed" if ready
-                                     else "Choose a microphone and virtual output, then apply.",
-                                     fg=GREEN if ready else SUB)
-
-    def _apply_route(self):
-        try:
-            values = {}
-            for key, box in self._route_boxes.items():
-                index = box.current()
-                values[key] = self._route_options[key][index][0] if index >= 0 else ""
-            snap = self.admin.configure_soundboard(values)
-            self._route_dirty = False
-            self._route_signature = None
-            self._fill_route()
-            if snap.get("error"):
-                self.route_status.config(text="Audio setup: " + snap["error"], fg=RED)
-        except Exception as exc:
-            self.route_status.config(text=str(exc), fg=RED)
-            log.exception("apply soundboard routing")
-
-    def _test_route(self, bus):
-        try:
-            self.admin.test_soundboard_route(bus)
-            detail = "Listen in the app using CABLE Output as its mic." if bus == "voice" else "Listen at the selected monitor."
-            self.route_status.config(text="Playing a short " + bus.title() + " tone. " + detail, fg=GREEN)
-        except Exception as exc:
-            self.route_status.config(text=str(exc), fg=RED)
 
     def _build_about(self):
         import tkinter as tk
@@ -688,7 +570,7 @@ class DecksterWindow:
             self.autostart_toggle.set(bool(s.get("autostart")))
             self._set_firewall_warning(bool(s.get("firewallNeeded")))
             self._fill_devices(s.get("devices", []))
-            self._fill_route()
+            self.routing_panel.update_snapshot(self.admin.soundboard_state())
             self._fill_soundboard_clips()
             self._update_qr(s.get("qrPath", ""))
         except Exception:  # noqa: BLE001
@@ -735,8 +617,8 @@ class DecksterWindow:
         else:
             for clip in clips:
                 routes = []
-                if clip.get("voice"): routes.append("Voice")
-                if clip.get("ears"): routes.append("Ears")
+                if clip.get("voice"): routes.append("Others")
+                if clip.get("ears"): routes.append("Me")
                 self.soundboard_clips.insert("end", "  " + str(clip.get("emoji") or "♪") + "  "
                                              + str(clip.get("label", "Untitled")) + "  ·  "
                                              + "+".join(routes or ["Muted"]))

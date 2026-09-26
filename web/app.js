@@ -959,8 +959,8 @@
       var icon = el("span", "sound-pad-emoji"); icon.textContent = clip.emoji || "♪";
       var name = el("span", "sound-pad-name"); name.textContent = clip.label || "Untitled";
       var buses = el("span", "sound-pad-buses");
-      if (clip.voice) { var v = el("span", "sound-pad-bus"); v.textContent = "VOICE"; buses.appendChild(v); }
-      if (clip.ears) { var e = el("span", "sound-pad-bus ears"); e.textContent = "EARS"; buses.appendChild(e); }
+      if (clip.voice) { var v = el("span", "sound-pad-bus"); v.textContent = "OTHERS"; buses.appendChild(v); }
+      if (clip.ears) { var e = el("span", "sound-pad-bus ears"); e.textContent = "ME"; buses.appendChild(e); }
       var progress = el("span", "sound-pad-progress");
       var started = padStarted[clip.id], duration = Number(clip.duration) || 0;
       if (clip.playing && duration > 0 && !started) started = padStarted[clip.id] = Date.now();

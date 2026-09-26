@@ -506,6 +506,15 @@ class SoundboardService:
         input_ids = {str(d.get("id")) for d in inputs}
         if (config.get("inputId") in input_ids and
                 config.get("voiceOutputId") in output_ids):
+            from .routing import is_virtual
+            voice = next(d for d in outputs if str(d.get("id")) == config["voiceOutputId"])
+            if not is_virtual(voice):
+                # A legacy speaker selection must not unexpectedly play the
+                # physical microphone through speakers on the next launch.
+                with self._lock:
+                    self._autostart_attempted = True
+                    self._error = "Open Audio routing and use recommended setup: the saved Voice device is a physical output."
+                return
             self.configure(config, outputs, inputs)
 
     def play(self, clip_id: str) -> None:

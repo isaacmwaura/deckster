@@ -176,7 +176,7 @@
         <div class="soundboard-body">
           <section id="soundboard-setup" class="soundboard-setup">
             <div class="soundboard-setup-title">Soundboard options</div>
-            <p>Set up the microphone, virtual cable, and monitor in Deckster on your PC. Open <b>Soundboard → Audio routing</b> to see and test the connections.</p>
+            <p>On your PC, open <b>Audio routing → Use recommended setup</b>, then <b>Connect these devices</b>. Follow step 4 to select the right microphone in your call/game.</p>
             <label>Navigation layout <select id="soundboard-layout"><option value="a">A — soundboard above Mixer</option><option value="b">B — soundboard left of Mixer</option></select></label>
             <button id="soundboard-save" class="soundboard-save">Save layout</button>
             <button id="soundboard-restore" class="soundboard-restore">Restore 12 starter sounds</button>
@@ -192,7 +192,7 @@
             <label>Label <input id="soundboard-edit-label" maxlength="48"></label>
             <label>Emoji <input id="soundboard-edit-emoji" maxlength="8"></label>
             <label>Gain <input id="soundboard-edit-gain" type="range" min="0" max="1" step="0.05"></label>
-            <div class="soundboard-routes"><label><input id="soundboard-edit-voice" type="checkbox"> Voice</label><label><input id="soundboard-edit-ears" type="checkbox"> Ears</label></div>
+            <div class="soundboard-routes"><label><input id="soundboard-edit-voice" type="checkbox"> Others hear</label><label><input id="soundboard-edit-ears" type="checkbox"> I hear</label></div>
             <div class="soundboard-editor-actions"><button id="soundboard-edit-delete" class="soundboard-edit-delete">Remove</button><span class="spacer"></span><button id="soundboard-edit-cancel">Cancel</button><button id="soundboard-edit-save" class="soundboard-save">Save</button></div>
           </div>
         </div>
@@ -207,6 +207,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=26"></script>
+  <script src="/static/app.js?v=27"></script>
 </body>
 </html>
