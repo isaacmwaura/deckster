@@ -21,6 +21,7 @@ from .macros.input import ComboError
 from .macros.registry import MacroRegistry
 from .server import Client
 from .state import AppState
+from .presentation import RevisionConflict
 
 log = get_logger("controller")
 
@@ -31,6 +32,7 @@ class Controller:
                  input_bindings: AppInputBindings | None = None,
                  media=None,
                  soundboard=None,
+                 presentation=None,
                  key_sender: Callable[[str], None] | None = None) -> None:
         self._state = state
         self._engine = engine
@@ -39,6 +41,7 @@ class Controller:
         self._bindings = input_bindings
         self._media = media  # MediaService | None
         self._soundboard = soundboard  # SoundboardService | None
+        self._presentation = presentation
         # Injectable so tests never fire real keystrokes into the focused window.
         if key_sender is not None:
             self._key_sender = key_sender
@@ -53,6 +56,8 @@ class Controller:
         if self._bindings is not None:
             self._state.set_app_bindings(self._bindings.list())
         self._publish_soundboard()
+        if self._presentation is not None:
+            self._state.set_presentation(self._presentation.snapshot())
 
     def _publish_soundboard(self) -> None:
         if self._soundboard is not None:
@@ -129,8 +134,16 @@ class Controller:
                 await self._soundboard_remove_clip(client, msg)
             elif t == "soundboard_restore_defaults":
                 await self._soundboard_restore_defaults(client)
+            elif t == "presentation_update":
+                if self._presentation is None:
+                    raise ValueError("presentation unavailable")
+                result = self._presentation.update(msg.get("changes"), msg.get("baseRevision"))
+                self._state.set_presentation(result)
             else:
                 await client.send({"t": "error", "code": "unimpl", "msg": f"no handler for {t!r}"})
+        except RevisionConflict as exc:
+            await client.send({"t": "error", "code": "presentation_conflict", "msg": str(exc),
+                               "presentation": self._presentation.snapshot()})
         except Exception as exc:  # noqa: BLE001 - report, never crash the socket
             log.exception("command %s failed", t)
             await client.send({"t": "error", "code": "cmdfail", "msg": str(exc)})
@@ -287,6 +300,10 @@ class Controller:
             return
         if not self._soundboard.remove_clip(str(msg.get("clipId", ""))):
             raise ValueError("unknown soundboard clip")
+        if self._presentation is not None:
+            changed = self._presentation.remove_clip(str(msg.get("clipId", "")))
+            if changed is not None:
+                self._state.set_presentation(changed)
         self._publish_soundboard()
 
     async def _soundboard_restore_defaults(self, client: Client) -> None:

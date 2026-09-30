@@ -21,7 +21,7 @@ async def client():
 async def test_health(client):
     resp = await client.get("/health")
     assert resp.status == 200
-    assert (await resp.json())["ok"] is True
+    assert await resp.json() == {"ok": True, "app": "deckster"}
 
 
 async def test_index_served(client):

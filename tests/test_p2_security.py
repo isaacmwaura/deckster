@@ -89,6 +89,7 @@ def test_parse_devices_filters_states():
 
 def test_reverse_args():
     assert adb.reverse_args("adb", 8765) == ["adb", "reverse", "tcp:8765", "tcp:8765"]
+    assert adb.reverse_args("adb", 8766) == ["adb", "reverse", "tcp:8765", "tcp:8766"]
 
 
 def test_adb_unavailable_is_graceful(monkeypatch):

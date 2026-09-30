@@ -5,6 +5,7 @@
  * from the design's VolumeDial (its variable-rate math is load-bearing). */
 (function () {
   "use strict";
+  var desktopPreview = window.parent !== window && /[?&]preview=1/.test(location.search);
 
   // ---------------------------------------------------------------- helpers
   var $ = function (id) { return document.getElementById(id); };
@@ -114,10 +115,10 @@
   Dial.prototype.R_FILL = 188; Dial.prototype.HALF = 58;
   Dial.prototype.cfg = function () {
     if (this.orientation === "left") return { vbw: 300, vbh: 370, px: 264, py: 185, vsign: -1,
-      numX: 140, numY: 169, numSize: 46, srcX: 140, srcY: 196, tagY: 210, muteX: 232, muteY: 185, muteR: 34,
+      numX: 140, numY: 169, numSize: 38, srcX: 140, srcY: 196, tagY: 210, muteX: 232, muteY: 185, muteR: 34,
       nudges: [{ tx: 232, ty: 96, plus: true }, { tx: 232, ty: 274, plus: false }], linX: 78, linTop: 54, linBot: 320 };
     return { vbw: 340, vbh: 300, px: 170, py: 286, vsign: 1,
-      numX: 170, numY: 150, numSize: 58, srcX: 170, srcY: 177, tagY: 185, muteX: 170, muteY: 244, muteR: 37,
+      numX: 170, numY: 150, numSize: 48, srcX: 170, srcY: 177, tagY: 185, muteX: 170, muteY: 244, muteR: 37,
       nudges: [{ tx: 42, ty: 270, plus: false }, { tx: 298, ty: 270, plus: true }], linX: 96, linTop: 44, linBot: 250 };
   };
   Dial.prototype.linear = function () { return this.target.mode === "linear"; };
@@ -320,7 +321,9 @@
     appInputBindings: {},                    // appId -> {keys, label}
     inputMuted: {},                          // optimistic per-app mic-mute toggle (OS can't read it)
     media: [],                               // now-playing SMTC sessions
-    mediaOpen: false,                        // media sheet visible
+    mediaOpen: false,
+    presentation: { revision: 0, appOrder: [], hiddenApps: [], pages: { soundboard: "top", devices: "right", media: "bottom" }, padSlots: [] },
+    activePage: "mixer",
     soundboard: { clips: [], config: {}, outputs: [], inputs: [], configured: false,
                   runtime: "setup_required", error: "" },
     soundboardOpen: false,
@@ -380,7 +383,10 @@
     var b = nativeBridge();
     if (b && b.saveToken) { try { b.saveToken(t); } catch (e) {} }
   }
-  function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function send(o) {
+    if (desktopPreview) { window.parent.postMessage({ t: "preview-command", command: o }, location.origin); return; }
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+  }
   function wsUrl() { return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/ws"; }
 
   function connect() {
@@ -399,7 +405,7 @@
     };
     ws.onerror = function () { try { ws.close(); } catch (e) {} };
   }
-  function ensureConnected() { if (ws && ws.readyState === 1) send({ t: "subscribe" }); else if (!ws || ws.readyState === 3) { reconnectDelay = 500; connect(); } }
+  function ensureConnected() { if (desktopPreview) return; if (ws && ws.readyState === 1) send({ t: "subscribe" }); else if (!ws || ws.readyState === 3) { reconnectDelay = 500; connect(); } }
 
   function handle(m) {
     switch (m.t) {
@@ -415,10 +421,11 @@
       case "snapshot": model.paired = true; updateChrome(); showPair(false); model.retry = 0; setConnection("connected"); ingestSnapshot(m); renderAll(); return;
       case "state": applyState(m); return;
       case "media": model.media = m.media || []; renderMedia(); return;
-      case "soundboard": model.soundboard = m.soundboard || model.soundboard; renderSoundboard(); return;
+      case "soundboard": model.soundboard = m.soundboard || model.soundboard; confirmClipSave(); renderSoundboard(); return;
+      case "presentation": acceptPresentation(m.presentation); return;
       case "app_input_ok": return;   // keystroke sent; optimistic toggle already applied
       case "macro_ok": return;
-      case "error": showToast("Command failed", m.msg || m.code); return;
+      case "error": if (m.presentation) acceptPresentation(m.presentation); if (pendingClipSave) clipSaveError(m.msg || m.code || "Could not save"); else showToast("Command failed", m.msg || m.code); return;
     }
   }
 
@@ -431,7 +438,8 @@
         iconKey: s.iconKey || null,
         level: Math.round((s.level != null ? s.level : 0) * 100), muted: !!s.muted, active: s.active !== false };
     });
-    applySavedOrder();   // honour the user's per-device tile arrangement
+    if (m.presentation) acceptPresentation(m.presentation);
+    applySavedOrder();
     var d = m.devices || {};
     model.system.spkLevel = (d.speakerMaster || {}).level != null ? d.speakerMaster.level : model.system.spkLevel;
     model.system.spkMuted = !!(d.speakerMaster || {}).muted;
@@ -444,9 +452,11 @@
     model.appInputBindings = m.appInputBindings || {};
     model.media = m.media || model.media;
     model.soundboard = m.soundboard || model.soundboard;
-    if (!model.selectedId && model.apps.length) model.selectedId = model.apps[0].id;
-    if (model.selectedId && !model.apps.some(function (a) { return a.id === model.selectedId; }))
-      model.selectedId = model.apps.length ? model.apps[0].id : null;
+    confirmClipSave();
+    var visibleApps = model.apps.filter(function (a) { return (model.presentation.hiddenApps || []).indexOf(a.id) < 0; });
+    if (!model.selectedId || !visibleApps.some(function (a) { return a.id === model.selectedId; }))
+      model.selectedId = visibleApps.length ? visibleApps[0].id : null;
+    if (!model.selectedId && model.dialMode === "app") model.dialMode = "system";
   }
   function devMap(x) { var name = x.name || ""; var paren = name.match(/^(.*?)\s*\((.*)\)\s*$/);
     return { id: x.id, name: paren ? paren[1] : name, sub: paren ? paren[2] : "", isDefault: !!x.isDefault }; }
@@ -464,7 +474,7 @@
   function dialTarget() {
     if (model.dialMode === "system") return { source: "Speakers", accent: "#4ddb7f", value: Math.round(model.system.spkLevel * 100), muted: model.system.spkMuted, mode: "jog", id: "sys", badge: "⚙", kind: "system" };
     if (model.dialMode === "mic") return { source: "Mic Sens", accent: "#ff7ab8", value: Math.round(model.system.micLevel * 100), muted: model.system.micMuted, mode: "linear", id: "mic", badge: "M", kind: "mic" };
-    var a = findApp(model.selectedId) || model.apps[0];
+    var a = findApp(model.selectedId);
     if (!a) return { source: "—", accent: "#4ddb7f", value: 0, muted: false, mode: "jog", id: "none", kind: "app" };
     return { source: a.name, accent: a.accent, value: a.level, muted: a.muted, mode: "jog", id: "app-" + a.id, iconKey: a.iconKey, kind: "app" };
   }
@@ -537,6 +547,7 @@
 
   function setConnection(state) {
     model.connection = state;
+    if (pendingClipSave && (state === "reconnecting" || state === "disconnected")) clipSaveError("Connection lost. Try Save again.");
     var dot = $("conn-dot"), text = $("conn-text"), banner = $("banner");
     dot.className = "conn-dot" + (state === "reconnecting" ? " warn" : state === "disconnected" ? " err" : "");
     if (state === "connected") { text.textContent = model.latency != null ? "Connected · " + model.latency + "ms" : "Connected"; text.style.color = "var(--green-txt)"; banner.className = "banner hidden"; _lostNotified = false; }
@@ -561,12 +572,14 @@
   }
 
   function renderApps() {
+    if (swipe) { pageRenderPending = true; return; }
     // A rebuild during a press (pending long-press OR active drag) would detach the
     // very tile under the finger — a background audio poll doing so is what made the
     // reorder silently fail. Freeze rebuilds until the gesture resolves.
     if (RO.active || RO.pending) return;
     var grid = $("apps-grid"); grid.innerHTML = "";
     model.apps.forEach(function (a) {
+      if ((model.presentation.hiddenApps || []).indexOf(a.id) >= 0) return;
       var on = a.id === model.selectedId && model.dialMode === "app";
       var tile = el("button", "tile" + (on ? " on" : "") + (a.active ? "" : " silent"));
       if (on) { tile.style.background = hexA(a.accent, 0.13); tile.style.borderColor = hexA(a.accent, 0.55); }
@@ -606,20 +619,43 @@
   }
 
   // ---- app-tile reordering (Android home-screen style: long-press to lift) ----
-  // Order is per-device (localStorage): the PC only knows which sessions exist, not
-  // the user's preferred layout. Long-press lifts a tile; dragging reorders live
-  // (siblings reflow around a dashed slot); drop saves the order.
+  // Presentation lives on the PC. A one-time legacy local order may be imported.
   var RO = { active: false, pending: null, app: null, tile: null, clone: null,
-             ox: 0, oy: 0, lpTimer: null };
+             ox: 0, oy: 0, x: 0, y: 0, lpTimer: null, moved: false };
   var reorderJustEnded = 0;
+  var reorderLastTouch = 0;
   function roPt(e) { var t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e; return { x: t.clientX, y: t.clientY }; }
 
-  function loadOrder() { try { return JSON.parse(localStorage.getItem("sc_app_order") || "[]") || []; } catch (e) { return []; } }
-  function persistOrder() { try { localStorage.setItem("sc_app_order", JSON.stringify(model.apps.map(function (a) { return a.id; }))); } catch (e) {} }
+  function loadOrder() { try { var value = JSON.parse(localStorage.getItem("sc_app_order") || "[]"); return Array.isArray(value) ? value.filter(function (x) { return typeof x === "string" && !!x; }) : []; } catch (e) { return []; } }
+  function updatePresentation(changes) {
+    send({ t: "presentation_update", changes: changes, baseRevision: model.presentation.revision });
+  }
+  function acceptPresentation(p) {
+    if (!p || typeof p.revision !== "number" || p.revision < model.presentation.revision) return;
+    var changed = JSON.stringify(p) !== JSON.stringify(model.presentation);
+    model.presentation = p;
+    try {
+      if (!desktopPreview && (!p.appOrder || !p.appOrder.length) && !localStorage.getItem("sc_app_order_migrated")) {
+        var legacy = loadOrder(), unique = [];
+        legacy.forEach(function (id) { if (unique.indexOf(id) < 0) unique.push(id); });
+        localStorage.setItem("sc_app_order_migrated", "1");
+        if (unique.length) updatePresentation({ appOrder: unique });
+      }
+    } catch (e) { /* storage may be disabled in a private WebView */ }
+    if (!changed) return;
+    if (swipe) swipe = null;
+    applySavedOrder();
+    if (model.selectedId && (p.hiddenApps || []).indexOf(model.selectedId) >= 0) {
+      var visible = model.apps.filter(function (a) { return (p.hiddenApps || []).indexOf(a.id) < 0; });
+      model.selectedId = visible.length ? visible[0].id : null;
+    }
+    if (!model.selectedId && model.dialMode === "app") model.dialMode = "system";
+    renderApps(); renderSoundboard(); layoutPages();
+  }
   // Reorder the model to the saved layout; apps not in the saved list (newly opened)
   // keep their natural order at the end.
   function applySavedOrder() {
-    var order = loadOrder(); if (!order.length) return;
+    var order = model.presentation.appOrder || []; if (!order.length) return;
     var pos = {}; for (var i = 0; i < order.length; i++) pos[order[i]] = i;
     var N = order.length;
     model.apps.forEach(function (a, idx) { a._ord = (pos[a.id] != null ? pos[a.id] : N + idx); });
@@ -631,10 +667,14 @@
     tile.addEventListener("mousedown", function (e) { roPressStart(app, tile, e); });
   }
   function roPressStart(app, tile, e) {
+    if (e.type === "touchstart") reorderLastTouch = Date.now();
+    if (e.type === "mousedown" && Date.now() - reorderLastTouch < 700) return;
     if (RO.active) return;
+    if (RO.pending) return;
+    var priorHide = $("tile-hide-drop"); if (priorHide) priorHide.parentNode.removeChild(priorHide);
     if (e.target && e.target.closest && e.target.closest(".tile-chips")) return; // chips own their gestures
     var p = roPt(e);
-    RO.pending = { app: app, tile: tile, x0: p.x, y0: p.y };
+    RO.pending = { app: app, tile: tile, x0: p.x, y0: p.y, pointerType: e.type };
     if (RO.lpTimer) clearTimeout(RO.lpTimer);
     RO.lpTimer = setTimeout(function () { roBegin(p.x, p.y); }, 380);
     document.addEventListener("touchmove", roDocMove, { passive: false });
@@ -665,13 +705,27 @@
     roMove(p.x, p.y);
   }
   function roDocUp(e) {
+    if (e && e.type === "touchcancel") { roCancel(); return; }
     var wasActive = RO.active;
     if (wasActive && e && e.cancelable) e.preventDefault();
+    if (wasActive && e) { var p = roPt(e); RO.x = p.x; RO.y = p.y; }
     roCleanup();          // clear pending BEFORE roEnd so its renderApps isn't frozen out
     if (wasActive) roEnd();
   }
+  function roCancel() {
+    roCleanup(); RO.active = false;
+    if (RO.clone && RO.clone.parentNode) RO.clone.parentNode.removeChild(RO.clone);
+    var hide = $("tile-hide-drop"); if (hide) hide.parentNode.removeChild(hide);
+    if (RO.originalOrder) {
+      var position = {}; RO.originalOrder.forEach(function (id, i) { position[id] = i; });
+      model.apps.sort(function (a, b) { return position[a.id] - position[b.id]; });
+    }
+    RO.clone = null; RO.app = null; RO.tile = null;
+    renderApps();
+  }
   function roBegin(x, y) {
     if (!RO.pending) return;
+    swipe = null; layoutPages(0, 0, false);
     var app = RO.pending.app, tile = RO.pending.tile;
     // Defensive: if a rebuild slipped through and detached the tile, re-find it by id.
     if (!document.body.contains(tile)) {
@@ -679,7 +733,9 @@
       for (var i = 0; i < kids.length; i++) if (kids[i].getAttribute("data-app-id") === app.id) { tile = kids[i]; break; }
     }
     var r = tile.getBoundingClientRect();
-    RO.active = true; RO.app = app; RO.tile = tile;
+    RO.active = true; RO.moved = false; RO.app = app; RO.tile = tile; RO.x = x; RO.y = y;
+    model.selectedId = app.id; model.dialMode = "app";
+    RO.originalOrder = model.apps.map(function (a) { return a.id; });
     RO.ox = x - r.left; RO.oy = y - r.top;
     var clone = tile.cloneNode(true);
     clone.className = "tile tile-drag-clone";
@@ -687,13 +743,25 @@
     clone.style.left = r.left + "px"; clone.style.top = r.top + "px";
     document.body.appendChild(clone);   // body has no transform, so fixed coords are viewport-true
     RO.clone = clone;
-    tile.classList.add("tile-drag-src");
+    tile.classList.add("tile-drag-src"); tile.classList.add("tile-held");
+    var hide = el("button", "tile-hide-drop"); hide.id = "tile-hide-drop";
+    hide.classList.add(model.presentation.hideInteraction === "tap" ? "hide-tap" : "hide-drag");
+    hide.textContent = "⊘  " + (model.presentation.hideInteraction === "tap" ? "Hide " : "Drop to hide ") + app.name;
+    hide.onclick = function () {
+      updatePresentation({ hiddenApps: (model.presentation.hiddenApps || []).concat([app.id]) });
+      if (hide.parentNode) hide.parentNode.removeChild(hide);
+    };
+    document.body.appendChild(hide);
     buzz(HAPTIC.hold); nudgeActivity();
   }
   function roMove(x, y) {
     if (!RO.clone) return;
+    RO.x = x; RO.y = y;
+    if (Math.abs(x - RO.pending.x0) > 8 || Math.abs(y - RO.pending.y0) > 8) RO.moved = true;
     RO.clone.style.left = (x - RO.ox) + "px";
     RO.clone.style.top = (y - RO.oy) + "px";
+    var hide = $("tile-hide-drop"), hr = hide && hide.getBoundingClientRect();
+    if (hide) hide.classList.toggle("hide-over", !!hr && x >= hr.left && x <= hr.right && y >= hr.top && y <= hr.bottom);
     roAutoScroll(y);
     var over = document.elementFromPoint(x, y);   // clone is pointer-events:none, so this sees the tile beneath
     var overTile = over && over.closest ? over.closest(".tile") : null;
@@ -712,23 +780,37 @@
     if (y < r.top + edge) grid.scrollTop -= 12;
     else if (y > r.bottom - edge) grid.scrollTop += 12;
   }
-  // DOM order is authoritative during a drag; mirror it back into model.apps.
+  // Replace only visible positions; hidden and inactive IDs keep their place.
+  function roOrderedIds() {
+    var visible = Array.prototype.map.call($("apps-grid").children, function (node) { return node.getAttribute("data-app-id"); });
+    var base = (model.presentation.appOrder || []).slice();
+    model.apps.forEach(function (a) { if (base.indexOf(a.id) < 0) base.push(a.id); });
+    var pending = visible.slice();
+    var merged = base.map(function (id) { return visible.indexOf(id) >= 0 ? pending.shift() : id; });
+    return merged.concat(pending);
+  }
   function roSyncModel() {
-    var grid = $("apps-grid"), byId = {};
+    var byId = {}, order = roOrderedIds();
     model.apps.forEach(function (a) { byId[a.id] = a; });
     var next = [];
-    Array.prototype.forEach.call(grid.children, function (node) {
-      var id = node.getAttribute("data-app-id"); if (byId[id]) next.push(byId[id]);
-    });
+    order.forEach(function (id) { if (byId[id]) next.push(byId[id]); });
     if (next.length === model.apps.length) model.apps = next;
   }
   function roEnd() {
+    var hide = $("tile-hide-drop"), rect = hide && hide.getBoundingClientRect();
+    var hideTarget = model.presentation.hideInteraction !== "tap" && RO.moved && rect && RO.x >= rect.left && RO.x <= rect.right && RO.y >= rect.top && RO.y <= rect.bottom;
+    roSyncModel();
+    var finalOrder = roOrderedIds();
     RO.active = false;
     if (RO.clone && RO.clone.parentNode) RO.clone.parentNode.removeChild(RO.clone);
     RO.clone = null;
-    if (RO.tile) RO.tile.classList.remove("tile-drag-src");
+    if (RO.tile) { RO.tile.classList.remove("tile-drag-src"); RO.tile.classList.remove("tile-held"); }
+    var droppedApp = RO.app;
     RO.tile = null; RO.app = null;
-    persistOrder();
+    if (hide && (RO.moved || hideTarget)) hide.parentNode.removeChild(hide);
+    else if (hide) setTimeout(function () { if (hide.parentNode) hide.parentNode.removeChild(hide); }, 5000);
+    if (hideTarget && droppedApp) updatePresentation({ hiddenApps: (model.presentation.hiddenApps || []).concat([droppedApp.id]) });
+    else if (RO.moved) updatePresentation({ appOrder: finalOrder });
     reorderJustEnded = Date.now();   // suppress the select-click that trails the drop
     buzz(HAPTIC.tap);
     renderApps();                    // clean rebuild in the new order
@@ -792,6 +874,7 @@
   }
 
   function renderDevices() {
+    if (swipe) { pageRenderPending = true; return; }
     fillDevList($("outputs"), model.outputs, "#4ddb7f", "output");
     fillDevList($("inputs"), model.inputs, "#ff7ab8", "input");
   }
@@ -824,6 +907,7 @@
   // browser tab that's playing (or played last). Reached by an edge swipe: left in
   // portrait, down in landscape (or the edge handle / a tap).
   function renderMedia() {
+    if (swipe) { pageRenderPending = true; return; }
     updateMediaConn();
     var host = $("media-list"); if (!host) return;
     host.innerHTML = "";
@@ -903,17 +987,16 @@
       renderMedia();
     }
   }
-  function openMedia() { if (model.mediaOpen || !model.paired) return; model.mediaOpen = true; $("media").className = "media open"; renderMedia(); buzz(HAPTIC.tap); nudgeActivity(); }
+  function openMedia() { setActivePage("media"); }
   // Chrome (media handle etc.) is only available once the phone is paired.
   function updateChrome() {
     var h = $("media-handle"), sb = $("tab-soundboard");
     if (h) h.style.display = model.paired ? "" : "none";
     if (sb) sb.style.display = model.paired ? "" : "none";
-    if (!model.paired && model.mediaOpen) closeMedia();
-    if (!model.paired && model.soundboardOpen) closeSoundboard();
+    if (!model.paired && model.activePage !== "mixer") setActivePage("mixer");
   }
-  function closeMedia() { if (!model.mediaOpen) return; model.mediaOpen = false; $("media").className = "media"; nudgeActivity(); }
-  function toggleMedia() { if (model.mediaOpen) closeMedia(); else openMedia(); }
+  function closeMedia() { setActivePage("mixer"); }
+  function toggleMedia() { setActivePage(model.activePage === "media" ? "mixer" : "media"); }
 
   // ============================================================ SOUNDBOARD
   function fillSoundboardSelect(node, devices, selected, placeholder) {
@@ -931,31 +1014,31 @@
       opt.selected = d.id === selected; node.appendChild(opt);
     });
   }
-  var soundboardSetupOpen = false, padStarted = {};
-  function setSoundboardSetup(open) {
-    soundboardSetupOpen = open;
-    $("soundboard").classList.toggle("setup-open", open);
-    $("soundboard-setup-toggle").setAttribute("aria-expanded", String(open));
-    $("soundboard-setup-toggle").textContent = open ? "Hide setup" : "Setup";
-  }
+  var padStarted = {}, padGesture = null, padRenderPending = false, editingSlot = -1, pendingClipSave = null;
   function renderSoundboard() {
-    var sb = model.soundboard || {}, cfg = sb.config || {};
-    if ($("soundboard-layout")) $("soundboard-layout").value = cfg.layout === "b" ? "b" : "a";
-    var stat = $("soundboard-status"), err = $("soundboard-error");
-    if (stat) stat.textContent = sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Set up routing on your PC";
-    if (err) err.textContent = sb.error || "";
+    var sb = model.soundboard || {};
+    var stat = $("soundboard-status");
+    if (stat) stat.textContent = sb.error || (sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Set up routing on your PC");
     var pads = $("soundboard-pads"); if (!pads) return;
+    if (padGesture || swipe) { padRenderPending = true; return; }
     pads.innerHTML = "";
     var clips = sb.clips || [];
-    if (!clips.length) {
-      var empty = el("div", "soundboard-empty");
-      empty.innerHTML = "<b>No pads yet</b><span>Add WAV, MP3, OGG, or FLAC clips from the Soundboard section in the Deckster desktop app.</span>";
-      pads.appendChild(empty); return;
-    }
-    clips.forEach(function (clip) {
+    var byId = {};
+    clips.forEach(function (clip) { byId[clip.id] = clip; });
+    var slots = (model.presentation.padSlots || []).slice(0, 12);
+    while (slots.length < 12) slots.push(null);
+    slots.forEach(function (id, slot) {
+      var clip = id && byId[id];
+      if (!clip) {
+        var plus = el("button", "sound-pad sound-pad-plus"); plus.textContent = "+";
+        plus.setAttribute("aria-label", "Choose sound for slot " + (slot + 1));
+        plus.onclick = function () { openSoundboardChooser(slot); };
+        pads.appendChild(plus); return;
+      }
       var pad = el("button", "sound-pad" + (clip.playing ? " playing" : ""));
       pad.disabled = model.connection !== "connected";
-      bindSoundboardPad(pad, clip);
+      pad.setAttribute("data-slot", slot);
+      bindSoundboardPad(pad, clip, slot);
       var icon = el("span", "sound-pad-emoji"); icon.textContent = clip.emoji || "♪";
       var name = el("span", "sound-pad-name"); name.textContent = clip.label || "Untitled";
       var buses = el("span", "sound-pad-buses");
@@ -974,94 +1057,237 @@
       pad.appendChild(progress); pads.appendChild(pad);
     });
   }
-  function bindSoundboardPad(pad, clip) {
-    var timer = null, held = false, downX = 0, downY = 0;
-    function clear() { if (timer) { clearTimeout(timer); timer = null; } }
+  function bindSoundboardPad(pad, clip, slot) {
+    var held = false, moved = false, downX = 0, downY = 0;
+    function clear() {
+      if (padGesture && padGesture.pad === pad) {
+        clearTimeout(padGesture.timer); padGesture = null;
+        if (padRenderPending) { padRenderPending = false; setTimeout(renderSoundboard, 0); }
+      }
+    }
     function start(e) {
-      held = false; clear(); downX = e.clientX; downY = e.clientY;
-      timer = setTimeout(function () { held = true; openSoundboardEditor(clip); buzz(HAPTIC.hold); }, 1100);
+      if (padGesture) return;
+      held = false; moved = false; downX = e.clientX; downY = e.clientY;
+      padGesture = { pad: pad, timer: setTimeout(function () {
+        held = true; clear(); openSoundboardEditor(clip, slot); buzz(HAPTIC.hold);
+      }, 1500) };
     }
     function end() { clear(); }
     pad.addEventListener("pointerdown", start); pad.addEventListener("pointerup", end);
     pad.addEventListener("pointermove", function (e) {
-      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 12) clear();
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 12) { moved = true; clear(); }
     });
     pad.addEventListener("pointercancel", clear); pad.addEventListener("pointerleave", clear);
     pad.onclick = function () {
-      if (held) { held = false; return; }
+      if (held || moved) { held = false; moved = false; return; }
       padStarted[clip.id] = Date.now();
-      renderSoundboard();
+      var progress = pad.querySelector(".sound-pad-progress");
+      if (progress) { progress.classList.remove("active"); void progress.offsetWidth; progress.style.animationDuration = (Number(clip.duration) || 0.5) + "s"; progress.style.animationDelay = "0s"; progress.classList.add("active"); }
       send({ t: "soundboard_play", clipId: clip.id }); buzz(HAPTIC.tap); nudgeActivity();
     };
   }
-  function openSoundboardEditor(clip) {
+  function openSoundboardEditor(clip, slot) {
+    editingSlot = slot;
     model.soundboardEditingId = clip.id;
     $("soundboard-editor-title").textContent = "Edit " + (clip.label || "pad");
     $("soundboard-edit-label").value = clip.label || ""; $("soundboard-edit-emoji").value = clip.emoji || "♪";
     $("soundboard-edit-gain").value = clip.gain != null ? clip.gain : 1;
     $("soundboard-edit-voice").checked = !!clip.voice; $("soundboard-edit-ears").checked = !!clip.ears;
+    $("soundboard-edit-error").textContent = "";
+    $("soundboard-edit-save").disabled = false;
+    $("soundboard-edit-save").textContent = "Save";
     $("soundboard-editor").className = "soundboard-editor";
   }
-  function closeSoundboardEditor() { model.soundboardEditingId = null; $("soundboard-editor").className = "soundboard-editor hidden"; }
+  function closeSoundboardEditor() { if (pendingClipSave) clearTimeout(pendingClipSave.timer); pendingClipSave = null; model.soundboardEditingId = null; editingSlot = -1; $("soundboard-editor").className = "soundboard-editor hidden"; }
   function saveSoundboardEditor() {
-    if (!model.soundboardEditingId) return;
-    send({ t: "soundboard_update_clip", clipId: model.soundboardEditingId, changes: {
+    if (!model.soundboardEditingId || pendingClipSave) return;
+    if (!desktopPreview && (!ws || ws.readyState !== 1 || model.connection !== "connected")) { $("soundboard-edit-error").textContent = "Reconnect to the PC, then try Save."; return; }
+    var changes = {
       label: $("soundboard-edit-label").value, emoji: $("soundboard-edit-emoji").value,
       gain: +$("soundboard-edit-gain").value, voice: $("soundboard-edit-voice").checked,
       ears: $("soundboard-edit-ears").checked
-    }}); closeSoundboardEditor(); buzz(HAPTIC.tap);
+    };
+    pendingClipSave = { id: model.soundboardEditingId, changes: changes };
+    pendingClipSave.timer = setTimeout(function () { if (pendingClipSave) clipSaveError("Save took too long. Try again."); }, 8000);
+    $("soundboard-edit-save").disabled = true;
+    $("soundboard-edit-save").textContent = "Saving…";
+    $("soundboard-edit-error").textContent = "";
+    send({ t: "soundboard_update_clip", clipId: pendingClipSave.id, changes: changes });
+  }
+  function clipSaveError(message) {
+    if (pendingClipSave) clearTimeout(pendingClipSave.timer);
+    pendingClipSave = null;
+    $("soundboard-edit-save").disabled = false;
+    $("soundboard-edit-save").textContent = "Save";
+    $("soundboard-edit-error").textContent = message;
+  }
+  function confirmClipSave() {
+    if (!pendingClipSave) return;
+    var expected = pendingClipSave, found = (model.soundboard.clips || []).filter(function (c) { return c.id === expected.id; })[0];
+    if (!found) return;
+    var c = expected.changes;
+    if (found.label === c.label && found.emoji === c.emoji && Math.abs(+found.gain - c.gain) < .001 && !!found.voice === c.voice && !!found.ears === c.ears) {
+      closeSoundboardEditor(); showToast("Pad saved", "Your changes are ready.", true); buzz(HAPTIC.tap);
+    }
   }
   function deleteSoundboardClip() {
-    if (!model.soundboardEditingId) return;
-    send({ t: "soundboard_remove_clip", clipId: model.soundboardEditingId }); closeSoundboardEditor(); buzz(HAPTIC.mute);
+    if (editingSlot < 0) return;
+    var slots = (model.presentation.padSlots || []).slice();
+    while (slots.length < 12) slots.push(null);
+    slots[editingSlot] = null;
+    updatePresentation({ padSlots: slots }); closeSoundboardEditor(); buzz(HAPTIC.mute);
   }
-  function saveSoundboardConfig() {
-    send({ t: "soundboard_config", config: {
-      layout: $("soundboard-layout").value || "a"
-    }});
-    buzz(HAPTIC.tap); nudgeActivity();
-  }
-  function restoreSoundboardDefaults() {
-    if (!window.confirm("Restore Deckster's 12 starter sounds? Your imported clips will be kept.")) return;
-    send({ t: "soundboard_restore_defaults" }); buzz(HAPTIC.tap); nudgeActivity();
+  function openSoundboardChooser(slot) {
+    var slots = model.presentation.padSlots || [], choices = $("soundboard-choices");
+    choices.innerHTML = "";
+    (model.soundboard.clips || []).forEach(function (clip) {
+      if (slots.indexOf(clip.id) >= 0) return;
+      var row = el("button", "soundboard-choice");
+      row.textContent = (clip.emoji || "♪") + "  " + (clip.label || "Untitled");
+      row.onclick = function () {
+        var next = (model.presentation.padSlots || []).slice(); while (next.length < 12) next.push(null);
+        if (next[slot] !== null || next.indexOf(clip.id) >= 0) { $("soundboard-chooser").className = "soundboard-editor hidden"; renderSoundboard(); return; }
+        next[slot] = clip.id; updatePresentation({ padSlots: next });
+        $("soundboard-chooser").className = "soundboard-editor hidden";
+      };
+      choices.appendChild(row);
+    });
+    if (!choices.children.length) { var empty = el("p"); empty.textContent = "All sounds are already assigned. Add more from the PC."; choices.appendChild(empty); }
+    $("soundboard-chooser").className = "soundboard-editor";
   }
   function openSoundboard() {
-    if (model.soundboardOpen || !model.paired) return;
-    model.soundboardOpen = true;
-    var layout = ((model.soundboard || {}).config || {}).layout === "b" ? " layout-b" : "";
-    $("soundboard").className = "soundboard" + layout + " open";
-    setSoundboardSetup(!((model.soundboard || {}).configured));
-    $("soundboard").setAttribute("aria-hidden", "false"); renderSoundboard(); buzz(HAPTIC.tap); nudgeActivity();
+    setActivePage("soundboard");
   }
   function closeSoundboard() {
-    if (!model.soundboardOpen) return;
-    model.soundboardOpen = false; $("soundboard").className = "soundboard";
-    $("soundboard").setAttribute("aria-hidden", "true"); nudgeActivity();
+    setActivePage("mixer");
   }
 
-  // Media opens with a swipe UP from the bottom edge in BOTH orientations, and
-  // closes with a swipe down. Bottom-edge + vertical keeps it clear of the
-  // Mixer/Devices pager (horizontal) — no gesture conflict.
-  var tsX = 0, tsY = 0, tsT = 0, tsBlocked = false;
+  // Every page has a physical coordinate around Mixer. During a swipe the two
+  // neighboring surfaces travel together under the finger.
+  var PAGE_DIR = { center: [0, 0], left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
+  var pageNodes = {}, swipe = null, pageRenderPending = false;
+  function pagePosition(name) {
+    return PAGE_DIR[(model.presentation.pages || {})[name] || (name === "mixer" ? "center" : "")] || [0, 0];
+  }
+  function renderNeighborCue(host, page, side) {
+    host.replaceChildren(); if (!page) return;
+    var chevron=el("i", "neighbor-chevron" + (side === "bottom" ? " down" : ""));
+    chevron.setAttribute("aria-hidden", "true"); host.appendChild(chevron);
+    host.appendChild(document.createTextNode(page[0].toUpperCase() + page.slice(1)));
+  }
+  function layoutPages(dx, dy, animate) {
+    var active = pagePosition(model.activePage), w = $("pager").clientWidth, h = $("pager").clientHeight;
+    var handle = $("media-handle");
+    var vertical = neighborFor("top") || neighborFor("bottom");
+    var side = neighborFor("top") ? "top" : "bottom";
+    if (handle) {
+      handle.className = "media-handle at-" + side;
+      handle.style.display = model.paired && vertical ? "" : "none";
+      handle.dataset.page = vertical || "";
+      renderNeighborCue(handle.querySelector("span"), vertical, side);
+      handle.setAttribute("aria-label", vertical + " " + (side === "top" ? "above" : "below") + " " + model.activePage);
+    }
+    var below = $("page-below"), belowPage = side === "top" && neighborFor("bottom");
+    if (below) {
+      below.style.display = model.paired && belowPage ? "" : "none";
+      below.dataset.page = belowPage || "";
+      renderNeighborCue(below.querySelector("span"), belowPage, "bottom");
+      below.setAttribute("aria-label", belowPage + " below " + model.activePage);
+    }
+    Object.keys(pageNodes).forEach(function (name) {
+      var node = pageNodes[name], p = pagePosition(name);
+      // A gesture owns its offset until release, even during live meter polls.
+      if (swipe && dx == null) return;
+      node.style.transition = animate === false ? "none" : "transform .28s cubic-bezier(.2,.8,.2,1)";
+      node.style.transform = "translate3d(" + ((p[0] - active[0]) * w + (dx || 0)) + "px," + ((p[1] - active[1]) * h + (dy || 0)) + "px,0)";
+      node.style.pointerEvents = name === model.activePage ? "auto" : "none";
+      node.setAttribute("aria-hidden", name === model.activePage ? "false" : "true");
+    });
+    model.mediaOpen = model.activePage === "media";
+    model.soundboardOpen = model.activePage === "soundboard";
+    $("tab-mixer").className = "tab" + (model.activePage === "mixer" ? " tab--on" : "");
+    $("tab-devices").className = "tab" + (model.activePage === "devices" ? " tab--on" : "");
+    $("tab-soundboard").className = "tab" + (model.activePage === "soundboard" ? " tab--on" : "");
+  }
+  function setActivePage(name) {
+    if (!model.paired && name !== "mixer") return;
+    if (!pageNodes[name] || name === model.activePage) return;
+    swipe = null;
+    model.activePage = name;
+    if (desktopPreview) window.parent.postMessage({ t: "preview-page", page: name }, location.origin);
+    layoutPages(0, 0, true);
+    if (name === "soundboard") renderSoundboard();
+    if (name === "media") renderMedia();
+    buzz(HAPTIC.tap); nudgeActivity();
+  }
+  function neighborFor(direction) {
+    var active = pagePosition(model.activePage), delta = PAGE_DIR[direction];
+    var names = ["mixer", "soundboard", "devices", "media"];
+    for (var i = 0; i < names.length; i++) {
+      var p = pagePosition(names[i]);
+      if (p[0] === active[0] + delta[0] && p[1] === active[1] + delta[1]) return names[i];
+    }
+    return null;
+  }
   function onTouchStart(e) {
-    var t = e.touches && e.touches[0]; if (!t) return;
-    tsX = t.clientX; tsY = t.clientY; tsT = Date.now();
-    tsBlocked = !!(e.target.closest && e.target.closest("button, input, select, label, .soundboard-setup, .soundboard-pads"));
+    var t = e.touches && e.touches[0];
+    if (!t || e.touches.length !== 1) { swipe = null; layoutPages(); return; }
+    var target = e.target, blocked = target.closest && target.closest("button, input, select, label, .dial-host, .soundboard-editor");
+    if (target.closest && target.closest(".sound-pad, .dev-list")) blocked = false;
+    if (target.closest && target.closest(".tile") && !target.closest(".tile-chips")) blocked = false;
+    if (blocked || RO.active) { swipe = null; return; }
+    var mediaList = target.closest && target.closest(".media-list");
+    swipe = { x: t.clientX, y: t.clientY, time: Date.now(), target: null, axis: null, node: target,
+              mediaScroll: mediaList ? mediaList.scrollLeft : 0 };
+  }
+  function onTouchMove(e) {
+    if (RO.active) { swipe = null; return; }
+    if (!swipe || !e.touches || !e.touches[0]) return;
+    if (e.touches.length !== 1) { swipe = null; layoutPages(); return; }
+    var dx = e.touches[0].clientX - swipe.x, dy = e.touches[0].clientY - swipe.y;
+    if (!swipe.axis) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 14) return;
+      swipe.axis = Math.abs(dx) > Math.abs(dy) * 1.25 ? "x" : Math.abs(dy) > Math.abs(dx) * 1.25 ? "y" : null;
+      if (!swipe.axis) return;
+      var direction = swipe.axis === "x" ? (dx > 0 ? "left" : "right") : (dy > 0 ? "top" : "bottom");
+      swipe.target = neighborFor(direction);
+      // Page navigation wins at a media-list boundary; interior card scrolling remains native.
+      var mediaList = swipe.node.closest && swipe.node.closest(".media-list");
+      if (model.activePage === "media" && swipe.axis === "x" && mediaList &&
+          ((dx < 0 && mediaList.scrollLeft + mediaList.clientWidth < mediaList.scrollWidth - 2) ||
+           (dx > 0 && mediaList.scrollLeft > 2))) swipe.target = null;
+      var scroll = swipe.node.closest && swipe.node.closest(".apps-grid, .dev-list");
+      if (swipe.axis === "y" && scroll && ((dy < 0 && scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 1) || (dy > 0 && scroll.scrollTop > 0))) swipe.target = null;
+      if (swipe.target && padGesture) { clearTimeout(padGesture.timer); padGesture = null; }
+      if (swipe.target) reorderJustEnded = Date.now();
+    }
+    if (!swipe.target) {
+      var mediaScrollNode = swipe.node.closest && swipe.node.closest(".media-list");
+      if (swipe.axis === "x" && mediaScrollNode) {
+        if (e.cancelable) e.preventDefault();
+        mediaScrollNode.scrollLeft = swipe.mediaScroll - dx;
+      }
+      return;
+    }
+    if (e.cancelable) e.preventDefault();
+    var delta = swipe.axis === "x" ? dx : dy;
+    var dir = swipe.axis === "x" ? (delta > 0 ? "left" : "right") : (delta > 0 ? "top" : "bottom");
+    if (neighborFor(dir) !== swipe.target) delta = 0;
+    var size = swipe.axis === "x" ? $("pager").clientWidth : $("pager").clientHeight;
+    delta = clamp(delta, -size, size);
+    layoutPages(swipe.axis === "x" ? delta : 0, swipe.axis === "y" ? delta : 0, false);
   }
   function onTouchEnd(e) {
-    var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
-    var dx = t.clientX - tsX, dy = t.clientY - tsY; if (Date.now() - tsT > 800 || tsBlocked) return;
-    var H = window.innerHeight, EDGE = 90, TH = model.soundboardOpen ? 110 : 55;
-    var layoutB = (((model.soundboard || {}).config || {}).layout === "b");
-    if (model.soundboardOpen) {
-      if ((layoutB && dx < -TH && Math.abs(dx) > Math.abs(dy) * 1.5) || (!layoutB && dy > TH && Math.abs(dy) > Math.abs(dx) * 1.5)) closeSoundboard();
-    } else if (!model.mediaOpen) {
-      if (tsY >= H - EDGE && dy < -TH && Math.abs(dy) > Math.abs(dx)) openMedia();
-      else if (layoutB && dx > TH && Math.abs(dx) > Math.abs(dy)) openSoundboard();
-      else if (!layoutB && tsY < H - EDGE && dy < -TH && Math.abs(dy) > Math.abs(dx)) openSoundboard();
-    } else if (dy > TH && Math.abs(dy) > Math.abs(dx)) {
-      closeMedia();
-    }
+    if (!swipe) return;
+    var t = e.changedTouches && e.changedTouches[0], s = swipe; swipe = null;
+    if (pageRenderPending) { pageRenderPending = false; setTimeout(renderAll, 0); }
+    if (padRenderPending) { padRenderPending = false; setTimeout(renderSoundboard, 0); }
+    if (!t || !s.target) { layoutPages(); return; }
+    var d = s.axis === "x" ? t.clientX - s.x : t.clientY - s.y;
+    var size = s.axis === "x" ? $("pager").clientWidth : $("pager").clientHeight;
+    var direction = s.axis === "x" ? (d > 0 ? "left" : "right") : (d > 0 ? "top" : "bottom");
+    if (neighborFor(direction) === s.target && Math.abs(d) >= Math.max(48, Math.min(90, size * .15)) && Date.now() - s.time < 1300) { reorderJustEnded = Date.now(); setActivePage(s.target); }
+    else layoutPages();
   }
 
   // ---- live device meters ----
@@ -1093,15 +1319,16 @@
     var btns = document.querySelectorAll("#mode-switch .mode-btn");
     for (var i = 0; i < btns.length; i++) btns[i].className = "mode-btn" + (btns[i].getAttribute("data-mode") === model.dialMode ? " mode-btn--on" : "");
   }
-  function goPage(i) { var el = $("pager"); el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" }); setPage(i); }
+  function goPage(i) { setActivePage(i === 1 ? "devices" : "mixer"); }
   function setPage(i) { model.page = i; $("tab-mixer").className = "tab" + (i === 0 ? " tab--on" : ""); $("tab-devices").className = "tab" + (i === 1 ? " tab--on" : ""); }
 
   // ---- toast ----
   var toastTimer = null;
-  function showToast(title, sub) {
-    var t = $("toast"); t.className = "toast";
+  function showToast(title, sub, success) {
+    var t = $("toast"); t.className = "toast" + (success ? " toast-success" : "");
     t.innerHTML = '<span class="t-ico">' + errSVG() + '</span><div class="spacer" style="flex:1"><div class="t-title">' + title + '</div><div class="t-sub">' + (sub || "") + '</div></div><span class="t-x">×</span>';
     t.querySelector(".t-x").onclick = function () { t.className = "toast hidden"; };
+    if (success) t.querySelector(".t-ico").textContent = "✓";
     if (toastTimer) clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.className = "toast hidden"; }, 5000);
   }
 
@@ -1202,6 +1429,7 @@
     if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
   }
   function nudgeActivity() {
+    if (desktopPreview) return;
     $("app").classList.remove("resting"); exitSaver();
     if (restTimer) clearTimeout(restTimer);
     if (saverTimer) clearTimeout(saverTimer);
@@ -1227,6 +1455,7 @@
     } catch (e) {}
   }
   function goFullscreen() {
+    if (desktopPreview) return;
     if (isFullscreen()) { lockLandscape(); return; }
     var el = document.documentElement;
     var fn = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
@@ -1242,6 +1471,12 @@
 
   // ================================================================ init
   function init() {
+    pageNodes = { mixer: document.querySelector(".page-mixer"), devices: document.querySelector(".page-devices"),
+                  media: $("media"), soundboard: $("soundboard") };
+    $("pager").appendChild(pageNodes.media);
+    $("pager").appendChild(pageNodes.soundboard);
+    Object.keys(pageNodes).forEach(function (name) { pageNodes[name].classList.add("spatial-page"); });
+    layoutPages(0, 0, false);
     dial = new Dial($("dial-host"), { onChange: dialOnChange, onCommit: dialOnCommit, onToggleMute: dialToggleMute });
     dial.setOrient(chooseOrient());
     dial.setTarget(targetForDial());
@@ -1263,7 +1498,6 @@
     // tabs + pager
     $("tab-mixer").onclick = function () { goPage(0); }; $("tab-devices").onclick = function () { goPage(1); }; $("dev-back").onclick = function () { goPage(0); };
     $("tab-soundboard").onclick = openSoundboard;
-    $("pager").addEventListener("scroll", function (e) { var el = e.currentTarget, idx = Math.round(el.scrollLeft / el.clientWidth); if (idx !== model.page) setPage(idx); });
     // pairing
     $("pair-go").onclick = function () { if (pairCode.length === 6) send({ t: "pair", code: pairCode, device: { id: deviceId(), name: deviceName() } }); };
     // in-app QR scanner (only offered when the browser can actually scan)
@@ -1288,27 +1522,40 @@
     // tapping the screensaver returns to the controls
     if ($("saver")) $("saver").addEventListener("click", nudgeActivity);
     // media sheet: edge handle, close button, backdrop, and edge-swipe gesture
-    if ($("media-handle")) $("media-handle").onclick = toggleMedia;
+    if ($("media-handle")) $("media-handle").onclick = function () { setActivePage(this.dataset.page); };
+    if ($("page-below")) $("page-below").onclick = function () { setActivePage(this.dataset.page); };
     if ($("media-up")) $("media-up").onclick = closeMedia;   // chevron: back up to mixer
     if ($("media-list")) $("media-list").addEventListener("scroll", updateMediaDots, { passive: true });
     if ($("soundboard-back")) $("soundboard-back").onclick = closeSoundboard;
     if ($("soundboard-stop")) $("soundboard-stop").onclick = function () { padStarted = {}; send({ t: "soundboard_stop_all" }); buzz(HAPTIC.mute); nudgeActivity(); };
-    $("soundboard-setup-toggle").onclick = function () { setSoundboardSetup(!soundboardSetupOpen); };
-    if ($("soundboard-save")) $("soundboard-save").onclick = saveSoundboardConfig;
-    if ($("soundboard-restore")) $("soundboard-restore").onclick = restoreSoundboardDefaults;
+    $("soundboard-choice-cancel").onclick = function () { $("soundboard-chooser").className = "soundboard-editor hidden"; };
     if ($("soundboard-edit-save")) $("soundboard-edit-save").onclick = saveSoundboardEditor;
     if ($("soundboard-edit-delete")) $("soundboard-edit-delete").onclick = deleteSoundboardClip;
     if ($("soundboard-edit-cancel")) $("soundboard-edit-cancel").onclick = closeSoundboardEditor;
     document.addEventListener("touchstart", onTouchStart, { passive: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
     document.addEventListener("touchend", onTouchEnd, { passive: true });
+    document.addEventListener("touchcancel", function () { swipe = null; layoutPages(); if (padRenderPending) { padRenderPending = false; setTimeout(renderSoundboard, 0); } }, { passive: true });
+    document.addEventListener("click", function (e) {
+      if (Date.now() - reorderJustEnded < 300 && e.target.closest && e.target.closest(".sound-pad")) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
     // resume-resync
     document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") { ensureConnected(); requestWakeLock(); } });
     window.addEventListener("pageshow", ensureConnected); window.addEventListener("online", ensureConnected); window.addEventListener("focus", ensureConnected);
-    window.addEventListener("resize", function () { dial.setOrient(chooseOrient()); });
-    if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
+    window.addEventListener("resize", function () { swipe = null; dial.setOrient(chooseOrient()); layoutPages(0, 0, false); });
+    if (!desktopPreview && "serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
 
     window.SC = { send: send, model: model, dial: dial };
-    connect(); requestWakeLock(); nudgeActivity();
+    if (desktopPreview) {
+      document.body.classList.add("desktop-preview");
+      window.addEventListener("message", function (event) {
+        if (event.source === window.parent && event.origin === location.origin && event.data && event.data.t === "preview-error") { handle({ t: "error", msg: event.data.message }); return; }
+        if (event.source !== window.parent || event.origin !== location.origin || !event.data || event.data.t !== "preview-state") return;
+        if (document.body.dataset.desktopGesture === "active") return;
+        handle(event.data.snapshot); setActivePage(event.data.page || "mixer"); layoutPages(0, 0, false);
+      });
+      window.parent.postMessage({ t: "preview-ready" }, location.origin);
+    } else { connect(); requestWakeLock(); nudgeActivity(); }
     if (window.requestAnimationFrame) requestAnimationFrame(meterFrame);
   }
 

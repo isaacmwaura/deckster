@@ -23,6 +23,7 @@ ADB_SERVER_PORT = 5037
 
 from ..config import resource_root
 from ..log import get_logger
+from ..net import USB_PHONE_PORT
 
 log = get_logger("transport.adb")
 
@@ -73,7 +74,7 @@ def parse_devices(adb_devices_output: str) -> list[str]:
 
 
 def reverse_args(adb: str, port: int) -> list[str]:
-    return [adb, "reverse", f"tcp:{port}", f"tcp:{port}"]
+    return [adb, "reverse", f"tcp:{USB_PHONE_PORT}", f"tcp:{port}"]
 
 
 def locate_adb() -> str | None:

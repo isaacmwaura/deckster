@@ -18,13 +18,47 @@ class Admin:
     """Bundles the settings actions over the live Runtime, pairing, and allow-list."""
 
     def __init__(self, runtime, pairing, allowlist, fingerprint: str = "",
-                 audio_state=None, soundboard=None) -> None:
+                 audio_state=None, soundboard=None, presentation=None) -> None:
         self._rt = runtime
         self._pairing = pairing
         self._allow = allowlist
         self._fingerprint = fingerprint
         self._audio_state = audio_state
         self._soundboard = soundboard
+        self._presentation = presentation
+        self._loop = None
+
+    def set_loop(self, loop) -> None:
+        self._loop = loop
+
+    def _publish_presentation(self, result: dict[str, Any]) -> None:
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._audio_state.set_presentation, result)
+        else:
+            self._audio_state.set_presentation(result)
+
+    def presentation_state(self) -> dict[str, Any]:
+        return {"presentation": self._presentation.snapshot(),
+                "sessions": list(self._audio_state.sessions.values()),
+                "clips": self._soundboard.snapshot()["clips"],
+                "devices": dict(self._audio_state.devices)}
+
+    def audition_soundboard_clip(self, clip_id: str) -> None:
+        self._soundboard.audition(clip_id, self._audio_state.devices.get("outputs", []))
+
+    def configure_presentation(self, changes: dict[str, Any], base_revision: int) -> dict[str, Any]:
+        result = self._presentation.update(changes, base_revision)
+        self._publish_presentation(result)
+        return result
+
+    def remove_soundboard_clip(self, clip_id: str) -> None:
+        if not self._soundboard.remove_clip(clip_id):
+            raise ValueError("unknown soundboard clip")
+        changed = self._presentation.remove_clip(clip_id)
+        if changed is not None:
+            self._publish_presentation(changed)
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._audio_state.set_soundboard, self.soundboard_state())
 
     def soundboard_state(self) -> dict[str, Any]:
         if self._audio_state is None or self._soundboard is None:
@@ -51,6 +85,8 @@ class Admin:
             autostart_on = False
         return {
             "version": __version__,
+            "desktopUrl": getattr(self._rt, "desktop_url", ""),
+            "desktopStarting": getattr(self._rt, "desktop_starting", False),
             "mode": self._rt.mode,                       # "loopback" (USB) | "lan" (Wi-Fi)
             "connectUrl": str(self._rt.connect["url"]),
             "connectNote": str(self._rt.connect["note"]),

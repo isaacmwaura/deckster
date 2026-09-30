@@ -12,6 +12,7 @@ import struct
 import wave
 
 from agent.soundboard import SoundboardRenderer, SoundboardService
+from agent.presentation import PresentationService
 from helpers import engine_client, hello, recv_until, run
 
 
@@ -177,6 +178,7 @@ def test_repeated_pad_restarts_on_both_buses(tmp_path):
     renderer = SoundboardRenderer()
     renderer._np = np
     renderer._voice_stream = object()
+    renderer._ears_stream = object()
     renderer._load = lambda _path: np.ones(12, dtype=np.float32)
     renderer.trigger("a", tmp_path / "a.wav", .5, True, True)
     renderer.trigger("b", tmp_path / "b.wav", .5, True, False)
@@ -184,6 +186,72 @@ def test_repeated_pad_restarts_on_both_buses(tmp_path):
     renderer.trigger("a", tmp_path / "a.wav", .5, True, True)
     assert [(v["id"], v["pos"]) for v in renderer._voices["voice"]] == [("b", 4), ("a", 0)]
     assert [(v["id"], v["pos"]) for v in renderer._voices["ears"]] == [("a", 0)]
+
+
+def test_float_wav_and_phase_inverted_stereo_reach_voice(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    renderer = SoundboardRenderer()
+    renderer._np = np
+    renderer._voice_stream = object()
+    t = np.arange(2400) / 48000
+    left = (.4 * np.sin(2 * np.pi * 660 * t)).astype(np.float32)
+    path = tmp_path / "phase.wav"
+    sf.write(path, np.column_stack((left, -left)), 48000, subtype="FLOAT")
+    renderer.trigger("phase", path, .8, True, False)
+    out = np.zeros((2400, 2), dtype=np.float32)
+    renderer._voice_callback(np.zeros((2400, 1)), out, 2400, None, None)
+    assert np.max(np.abs(out)) > .3
+    np.testing.assert_allclose(out[:, 0], out[:, 1])
+    assert renderer.playing_ids() == set()
+
+
+def test_stopped_stream_and_missing_monitor_are_reported(tmp_path):
+    import numpy as np
+    import pytest
+    from types import SimpleNamespace
+    renderer = SoundboardRenderer()
+    renderer._np = np
+    renderer._voice_stream = SimpleNamespace(active=False)
+    with pytest.raises(RuntimeError, match="Audio device stopped"):
+        renderer.trigger("a", tmp_path / "a.wav", 1, True, False)
+    renderer._voice_stream.active = True
+    with pytest.raises(RuntimeError, match="monitoring output"):
+        renderer.trigger("a", tmp_path / "a.wav", 1, False, True)
+    renderer._load = lambda _path: np.ones(8, dtype=np.float32)
+    renderer.trigger("a", tmp_path / "a.wav", 1, True, True)
+    assert len(renderer._voices["voice"]) == 1
+    assert renderer._voices["ears"] == []  # monitoring is optional for Voice pads
+
+
+def test_all_starter_sounds_produce_finite_voice_audio():
+    import numpy as np
+    pack = Path(__file__).resolve().parents[1] / "assets" / "default-sounds"
+    renderer = SoundboardRenderer()
+    renderer._np = np
+    renderer._voice_stream = object()
+    manifest = json.loads((pack / "manifest.json").read_text())
+    for clip in manifest["clips"]:
+        renderer.trigger(clip["key"], pack / clip["file"], clip["gain"], True, False)
+        data = renderer._clips[clip["key"]]
+        output = np.zeros((len(data), 2), dtype=np.float32)
+        renderer._voice_callback(np.zeros((len(data), 1)), output, len(data), None, None)
+        assert np.isfinite(output).all(), clip["key"]
+        assert np.max(np.abs(output)) > .05, clip["key"]
+        assert renderer.playing_ids() == set()
+
+
+def test_audition_uses_physical_output_without_changing_route(tmp_path):
+    from types import SimpleNamespace
+    calls = []
+    service = SoundboardService(tmp_path)
+    original = service.snapshot()["config"]
+    service._preview_renderer = SimpleNamespace(preview=lambda *args: calls.append(args))
+    service.audition(service.snapshot()["clips"][0]["id"], [
+        {"id": "virtual", "name": "CABLE Input", "isDefault": True},
+        {"id": "headphones", "name": "Headphones", "isDefault": True}])
+    assert calls[0][2] == "Headphones"
+    assert service.snapshot()["config"] == original
 
 
 def test_soundboard_controller_config_and_stop(tmp_path):
@@ -209,11 +277,43 @@ def test_soundboard_controller_config_and_stop(tmp_path):
     run(body())
 
 
+def test_phone_tone_edits_survive_unassign_and_restart(tmp_path):
+    async def body():
+        source = tmp_path / "clip.wav"; _wav(source)
+        root = tmp_path / "data"
+        service = SoundboardService(root, renderer_factory=RecordingRenderer,
+                                    defaults_root=tmp_path / "no-defaults")
+        clip = service.import_clip(source, label="Old")
+        presentation = PresentationService(root, service)
+        async with engine_client(soundboard=service, presentation=presentation) as (client, state, _controller):
+            ws = await client.ws_connect("/ws"); await hello(ws)
+            await ws.send_json({"t": "soundboard_update_clip", "clipId": clip["id"],
+                                "changes": {"label": "New bell", "emoji": "🔔", "gain": .37,
+                                            "voice": False, "ears": True}})
+            soundboard = (await recv_until(ws, "soundboard"))["soundboard"]
+            saved = next(c for c in soundboard["clips"] if c["id"] == clip["id"])
+            assert {key: saved[key] for key in ("label", "emoji", "gain", "voice", "ears")} == {
+                "label": "New bell", "emoji": "🔔", "gain": .37, "voice": False, "ears": True}
+            await ws.send_json({"t": "presentation_update", "baseRevision": 0,
+                                "changes": {"padSlots": [None] * 12}})
+            assert (await recv_until(ws, "presentation"))["presentation"]["padSlots"] == [None] * 12
+            assert any(c["id"] == clip["id"] for c in state.soundboard["clips"])
+            await ws.close()
+        restarted = SoundboardService(root, renderer_factory=RecordingRenderer,
+                                      defaults_root=tmp_path / "no-defaults")
+        persisted = next(c for c in restarted.snapshot()["clips"] if c["id"] == clip["id"])
+        assert {key: persisted[key] for key in ("label", "emoji", "gain", "voice", "ears")} == {
+            "label": "New bell", "emoji": "🔔", "gain": .37, "voice": False, "ears": True}
+        assert PresentationService(root, restarted).snapshot()["padSlots"] == [None] * 12
+
+    run(body())
+
+
 def test_cc0_starter_pack_installs_once_and_can_be_restored(tmp_path):
     pack = Path(__file__).resolve().parents[1] / "assets" / "default-sounds"
     service = SoundboardService(tmp_path / "data", defaults_root=pack)
     clips = service.snapshot()["clips"]
-    assert len(clips) == 12
+    assert len(clips) == 16
     assert {clip["id"] for clip in clips} >= {
         "default-crickets", "default-rimshot", "default-applause", "default-air-horn",
     }
@@ -228,9 +328,9 @@ def test_cc0_starter_pack_installs_once_and_can_be_restored(tmp_path):
     assert "default-crickets" not in {clip["id"] for clip in restarted.snapshot()["clips"]}
 
     # Explicit restore resets the starter pack while preserving imported clips.
-    assert restarted.restore_defaults(reset=True) == 12
+    assert restarted.restore_defaults(reset=True) == 16
     restored = restarted.snapshot()["clips"]
-    assert len(restored) == 13
+    assert len(restored) == 17
     assert custom["id"] in {clip["id"] for clip in restored}
 
 

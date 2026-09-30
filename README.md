@@ -1,12 +1,33 @@
 # Deckster
 
-**Turn a spare Android phone (or an iPhone) into a wireless audio mixer for your Windows PC.**
+**Turn your phone into an audio mixer and soundboard for your Windows PC.**
 
-Per‑app volume and mutes, microphone control, output/input device switching, and
-now‑playing transport — all from a touch surface on your phone. It's a free,
-no‑hardware alternative to a Stream Deck or GoXLR for streamers and gamers.
+Control app volumes, mute your microphone, play sound effects into a game or call,
+switch devices, and manage media from a touch screen. Set everything up in a
+redesigned desktop workspace with a live preview of the actual phone interface.
 
-![Mixer](docs/img/mixer.png)
+![Deckster desktop Soundboard: sound library and live phone pads](docs/img/desktop-soundboard-v0.6.3.png)
+
+## New in v0.6.3
+
+- **A redesigned desktop app** with dedicated Page layout, Phone workspace,
+  Soundboard, Audio routing, Connect & devices, and Settings pages.
+- **A phone soundboard with 12 assignable pads and 16 CC0 starter sounds.** Import
+  WAV, MP3, OGG or FLAC files, click to audition on the PC, then drag sounds onto
+  the live preview. Hold a desktop pad to lift and swap it, or return it to the tray.
+- **Your phone, your layout.** Place Mixer, Soundboard, Devices and Media around
+  the home screen; arrange, hide and restore app tiles; try page navigation in
+  the preview. Save to phone applies your edits; Discard restores the saved layout.
+- **A visible audio path:** physical microphone + sounds → virtual cable → the
+  microphone selected in your game/call, with a separate local listening output.
+- **Integrated sound management** for names, icons, volume and Others/Me routes,
+  plus a clearly scoped phone-defaults reset that preserves sounds and audio routes.
+- **Cleaner phone controls** with smaller Mixer readouts, subtle page chevrons,
+  deliberate swipe/hold behavior and clip-duration playback indicators.
+
+These features are in the current **v0.6.3 source**. The latest packaged GitHub
+release remains **v0.5.3**; those older downloads do not contain the new desktop
+workspace. [Build the current source](#build-from-source) to use this version.
 
 A tiny agent runs on the PC and serves a touch web app to the phone. On Android you
 install a thin native app (below); any other phone just opens it in the browser.
@@ -29,19 +50,22 @@ install a thin native app (below); any other phone just opens it in the browser.
 - **Now playing** — title, artist, album art, and play/pause/next/prev for Spotify and
   the browser tab that's playing.
 - **Game-agnostic soundboard** — import clips on the PC, then trigger them from the
-  phone with per-pad gain and separate **Voice** (call/game) and **Ears** (monitor)
-  routes. It starts with 12 removable CC0 sounds, including crickets, rimshot,
+  phone with per-pad volume and separate **Others** (call/game) and **Me** (local listening)
+  routes. It starts with 16 removable CC0 sounds and 12 assignable phone pads, including crickets, rimshot,
   applause, air horn, and censor bleep. Multiple clips can play at once and
   **Stop all** silences them immediately.
-- **Rearrange your app tiles** — long‑press and drag, like an Android home screen.
+- **Rearrange and hide app tiles** — manage visibility/order from the PC or hold a
+  tile on the phone. Choose drag-to-Hide or hold-then-tap Hide.
 - **Made for a wall/desk mount** — fullscreen, landscape‑locked, screen stays awake,
   with an OLED burn‑in guard.
-- **Secure by design** — only paired devices can control the PC; every command needs a
+- **Paired phone control** — remote phone commands require a valid pairing
   token. Wired USB keeps it entirely off the network.
 
-| Settings (on the PC) | Devices | Pairing |
+| Page layout | Phone workspace | Audio routing |
 |---|---|---|
-| ![Settings](docs/img/settings.png) | ![Devices](docs/img/devices.png) | ![Pairing](docs/img/pairing.png) |
+| ![Arrange pages](docs/img/desktop-layout-v0.6.3.png) | ![Manage apps and Hide gestures](docs/img/desktop-workspace-v0.6.3.png) | ![Microphone and soundboard audio flow](docs/img/desktop-routing-v0.6.3.png) |
+
+Screenshots show demonstration sessions in the shared phone renderer.
 
 ---
 
@@ -54,14 +78,18 @@ pip install -r requirements.txt
 python -m agent.main
 ```
 
-A tray icon appears and the **Deckster control panel** window opens. (Closing the
-window hides it to the tray; click the tray icon → **Show Deckster** to bring it
-back.) There you'll see the **connect URL**, the **pairing code**, and toggles for
-USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
+A tray icon appears and **Deckster** opens in a dedicated Edge app window.
+Microsoft Edge supplies the desktop renderer; a native panel is available as a
+fallback if Edge is unavailable. Closing the window keeps Deckster running in
+the tray. Use the shortcut or tray → **Show Deckster** to reopen it.
 
-> Prefer a one‑click install? Grab the versioned `Deckster-vX.Y.Z.exe` from the
-> [Releases](../../releases) page — no Python needed. It's unsigned (open source), so
-> Windows SmartScreen may warn once; choose **More info → Run anyway**.
+Open **Connect & devices** for the pairing QR/code, USB/Wi-Fi connection options,
+paired phones and Windows Firewall setup. **Settings** contains secure phone
+transport, start-with-Windows, and restore actions.
+
+> Versioned EXE/APK downloads are on the [public Releases page](https://github.com/isaacmwaura/deckster/releases).
+> Check the release version: current source is v0.6.3, while the latest packaged
+> release is v0.5.3. Windows builds are unsigned and may trigger SmartScreen.
 
 ---
 
@@ -69,7 +97,7 @@ USB/Wi‑Fi, TLS, paired devices, and start‑with‑Windows.
 
 ### 📱 Android — use the app (recommended)
 
-Install the versioned `Deckster-vX.Y.Z.apk` from [Releases](../../releases) (allow "install from this
+Install the versioned `Deckster-vX.Y.Z.apk` from [Releases](https://github.com/isaacmwaura/deckster/releases) (allow "install from this
 source" — normal for a sideloaded app). Then pick a connection:
 
 **USB — primary, most secure.** Traffic never touches the network.
@@ -79,8 +107,8 @@ source" — normal for a sideloaded app). Then pick a connection:
 3. First time only: enter the 6‑digit **pairing code** from the PC settings page.
 
 **Wi‑Fi — alternative.** Phone and PC on the same network.
-1. In the PC settings page, switch **Connection** to **Wi‑Fi**, and run the one‑time
-   firewall command it shows you.
+1. In **Connect & devices**, select **Wi-Fi**. If needed, use **Allow Wi-Fi**
+   and approve the Windows prompt for the firewall rule.
 2. In the app, **Scan QR** (or enter the PC's address), then pair with the code.
 3. Turn on **Secure connection (TLS)** in settings for an encrypted link — the app
    pins the certificate, so there's **no warning and nothing to install** on the phone.
@@ -91,8 +119,7 @@ source" — normal for a sideloaded app). Then pick a connection:
 ### 🍎 iPhone / iPad — use the browser (Wi‑Fi)
 
 iPhones connect over **Wi‑Fi in Safari** (iOS can't do the USB path):
-1. In the PC settings page, switch **Connection** to **Wi‑Fi** and run the firewall
-   command it shows.
+1. In **Connect & devices**, select **Wi-Fi** and use **Allow Wi-Fi** if needed.
 2. On the iPhone, **scan the QR code** from the PC with the **Camera app** — it opens
    Safari and pairs in one step. (Or open the URL and type the 6‑digit code.)
 3. Tap the page and use **Share → Add to Home Screen** for a fullscreen, app‑like icon.
@@ -109,25 +136,43 @@ integration. Windows needs a virtual audio endpoint for this; the current releas
 [VB-CABLE](https://vb-audio.com/Cable/) but does not bundle its separately licensed driver.
 
 1. Install VB-CABLE, then restart Windows if its installer asks you to.
-2. In the Deckster PC control panel, open **Soundboard** and import WAV, MP3, OGG, or
-   FLAC clips. Deckster installs 12 starter sounds automatically; **Restore 12 starter
-   sounds** brings them back without touching your own imports.
-3. Open **Audio routing** on the PC and click **Use recommended setup**. The cards
-   show your microphone and sound clips flowing to other people, plus optional
-   clip playback for you. Change the devices in the cards if needed, then click
-   **Connect these devices**. Dashed wires show a preview; solid wires show a
-   connected PC route.
-4. Follow step 4 on that page: choose the displayed microphone name in Discord,
-   your game, or OBS (usually **CABLE Output**). The two cable names are its entrance
-   and exit. **Test what others hear** sends a tone to the call/game's microphone
-   test; **Test what I hear** plays a tone on your headphones/speakers.
+2. Open **Soundboard** on the PC. Click **Import sounds** for your own clips, or
+   use the 16 starter sounds. Click a tray sound to listen locally; drag it onto
+   one of the 12 phone pads. Replacing a pad returns its old sound to the tray.
+   Hold an assigned desktop pad to lift it, then drop it on another pad to swap.
+3. Click **Save to phone** to apply assignments. **Discard changes** beside Save
+   abandons every unsaved page, app, Hide and pad-layout edit.
+4. Open **Audio routing**. Choose your physical microphone, **CABLE Input** as the
+   virtual-cable output, and optional headphones/speakers for local listening.
+   Click **Connect audio**. The flow shows the receiving microphone name.
+5. Select that receiving microphone in Discord, your game or OBS, usually
+   **CABLE Output**. **Test to others** sends a test tone into the cable;
+   **Test to me** checks the local output. Check the receiving app's own mic test
+   to confirm that it receives your voice and sounds.
 
-Each phone pad can send a clip to **Others**, **Me**, or both. Your own monitor
-plays clips only. Use `--start-hidden` to launch the PC app into its tray without
-opening a window.
+Each pad can send a clip to **Others**, **Me**, or both. Local monitoring plays
+clips only. **Manage sound library** lets you edit names, icons, volume and routes,
+including sounds not assigned to a pad. Double-click an assigned desktop pad to
+edit its sound. Clip edits save separately from the phone-layout draft.
 
-Your clip assignments, gain, routing, selected endpoints, and navigation layout persist
-across restarts. Layout A puts Soundboard above Mixer; Layout B puts it to the left.
+Use **Page layout** to position all four pages, including Mixer. Occupied
+positions swap; Save requires a page in the center. **Phone workspace** manages
+app order, visibility, hidden apps and the two Hide interactions. Use the shared
+preview to try the pages and navigation before saving.
+
+On the phone, hold an app tile to move or hide it. A sound-pad tap plays the clip;
+tapping it again restarts it. Hold a pad for 1.5 seconds to edit its settings.
+**Remove** clears the pad assignment; deleting from the PC library removes the
+sound file too. Tap an empty **+** to choose an unassigned sound.
+
+**Restore defaults** resets page placement, app order/visibility, Hide preference
+and pad assignments. It preserves the full sound library, clip edits, audio
+routes, paired phones, connection mode and startup settings. **Restore starter
+sounds** is separate: it restores starter sounds and their original settings
+while retaining imported files.
+
+Use `--start-hidden` to start the PC agent in its tray without opening a window.
+See [CHANGELOG.md](CHANGELOG.md) for the changes and validation limits.
 The starter pack is CC0/public-domain and its complete provenance, source hashes, and
 per-file hashes live in [`assets/default-sounds/`](assets/default-sounds/).
 
@@ -149,8 +194,11 @@ per-file hashes live in [`assets/default-sounds/`](assets/default-sounds/).
   the network entirely — the secure default.
 - **TLS** (optional): the agent serves HTTPS with a self‑signed certificate; the Android
   app pins its fingerprint for a warning‑free encrypted link.
-- The **settings page** (`/admin`) is restricted to `localhost`, so a phone on the LAN
-  can never reach it — even in Wi‑Fi mode.
+- The **desktop workspace** runs on a separate HTTP listener bound only to
+  `127.0.0.1`, with Host and Origin checks on its requests. It exposes no phone
+  WebSocket and uses no browser certificate exceptions. The phone transport
+  retains its own pairing and optional pinned TLS connection.
+- The **settings API** is restricted to loopback access, including in Wi-Fi mode.
 
 ---
 

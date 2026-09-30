@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <link rel="stylesheet" href="/static/style.css?v=25">
+  <link rel="stylesheet" href="/static/style.css?v=31">
 </head>
 <body>
   <div id="app" class="app">
@@ -141,19 +141,12 @@
     <button id="media-handle" class="media-handle" aria-label="Open media controls">
       <span class="media-handle-ico">♪</span>
     </button>
+    <button id="page-below" class="media-handle at-bottom" aria-label="Page below"><span class="media-handle-ico"></span></button>
 
     <!-- Media page: full-page now-playing, one menu in the swipe-between UX -->
     <div id="media" class="media">
       <div class="media-sheet">
         <header class="media-topbar">
-          <div class="media-tb-side">
-            <span id="media-conn-dot" class="conn-dot"></span>
-            <span id="media-conn-text" class="conn-text">connecting…</span>
-          </div>
-          <button id="media-up" class="media-up" aria-label="Back to mixer">
-            <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 15 L12 9 L18 15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-            <span class="media-up-label">Mixer</span>
-          </button>
           <div class="media-tb-side media-tb-right">
             <span class="media-title">Now Playing</span>
           </div>
@@ -168,20 +161,10 @@
     <div id="soundboard" class="soundboard" aria-hidden="true">
       <section class="soundboard-sheet">
         <header class="soundboard-topbar">
-          <button id="soundboard-back" class="soundboard-back" aria-label="Back to mixer">‹ <span>Mixer</span></button>
           <div><div class="soundboard-title">Soundboard</div><div id="soundboard-status" class="soundboard-status">Set up a routing endpoint</div></div>
-          <button id="soundboard-setup-toggle" class="soundboard-setup-toggle" aria-controls="soundboard-setup" aria-expanded="false">Setup</button>
           <button id="soundboard-stop" class="soundboard-stop">■ Stop all</button>
         </header>
         <div class="soundboard-body">
-          <section id="soundboard-setup" class="soundboard-setup">
-            <div class="soundboard-setup-title">Soundboard options</div>
-            <p>On your PC, open <b>Audio routing → Use recommended setup</b>, then <b>Connect these devices</b>. Follow step 4 to select the right microphone in your call/game.</p>
-            <label>Navigation layout <select id="soundboard-layout"><option value="a">A — soundboard above Mixer</option><option value="b">B — soundboard left of Mixer</option></select></label>
-            <button id="soundboard-save" class="soundboard-save">Save layout</button>
-            <button id="soundboard-restore" class="soundboard-restore">Restore 12 starter sounds</button>
-            <p id="soundboard-error" class="soundboard-error"></p>
-          </section>
           <section class="soundboard-pads-wrap">
             <div id="soundboard-pads" class="soundboard-pads"></div>
           </section>
@@ -189,13 +172,20 @@
         <div id="soundboard-editor" class="soundboard-editor hidden">
           <div class="soundboard-editor-card">
             <h2 id="soundboard-editor-title">Edit pad</h2>
-            <label>Label <input id="soundboard-edit-label" maxlength="48"></label>
-            <label>Emoji <input id="soundboard-edit-emoji" maxlength="8"></label>
-            <label>Gain <input id="soundboard-edit-gain" type="range" min="0" max="1" step="0.05"></label>
-            <div class="soundboard-routes"><label><input id="soundboard-edit-voice" type="checkbox"> Others hear</label><label><input id="soundboard-edit-ears" type="checkbox"> I hear</label></div>
+            <div class="soundboard-editor-fields">
+              <label>Label <input id="soundboard-edit-label" maxlength="48"></label>
+              <label>Emoji <input id="soundboard-edit-emoji" maxlength="8"></label>
+              <label>Gain <input id="soundboard-edit-gain" type="range" min="0" max="1" step="0.05"></label>
+              <div class="soundboard-routes"><label><input id="soundboard-edit-voice" type="checkbox"> Others hear</label><label><input id="soundboard-edit-ears" type="checkbox"> I hear</label></div>
+            </div>
+            <p id="soundboard-edit-error" class="soundboard-edit-error" role="status"></p>
             <div class="soundboard-editor-actions"><button id="soundboard-edit-delete" class="soundboard-edit-delete">Remove</button><span class="spacer"></span><button id="soundboard-edit-cancel">Cancel</button><button id="soundboard-edit-save" class="soundboard-save">Save</button></div>
           </div>
         </div>
+        <div id="soundboard-chooser" class="soundboard-editor hidden"><div class="soundboard-editor-card">
+          <h2>Choose a sound</h2><div id="soundboard-choices" class="soundboard-choices"></div>
+          <div class="soundboard-editor-actions"><button id="soundboard-choice-cancel">Cancel</button></div>
+        </div></div>
       </section>
     </div>
 
@@ -207,6 +197,6 @@
       </div>
     </div>
   </div>
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/app.js?v=31"></script>
 </body>
 </html>

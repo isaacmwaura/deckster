@@ -41,6 +41,11 @@ class AppState:
             "clips": [], "config": {}, "configured": False,
             "runtime": "setup_required", "error": "", "outputs": [], "inputs": [],
         }
+        self.presentation: dict[str, Any] = {
+            "revision": 0, "appOrder": [], "hiddenApps": [],
+            "pages": {"soundboard": "top", "devices": "right", "media": "bottom"},
+            "padSlots": [None] * 12,
+        }
         self._subscribers: set[asyncio.Queue] = set()
 
     # ---- subscription plumbing -------------------------------------------
@@ -75,6 +80,7 @@ class AppState:
             "appInputBindings": self.app_bindings,
             "media": self.media,
             "soundboard": self.soundboard,
+            "presentation": self.presentation,
         }
 
     # ---- mutations (called on the event loop thread) ----------------------
@@ -138,6 +144,12 @@ class AppState:
     def set_soundboard(self, soundboard: dict[str, Any]) -> None:
         self.soundboard = soundboard
         self._broadcast({"t": "soundboard", "soundboard": soundboard})
+
+    def set_presentation(self, presentation: dict[str, Any]) -> None:
+        if presentation.get("revision", -1) < self.presentation.get("revision", -1):
+            return
+        self.presentation = presentation
+        self._broadcast({"t": "presentation", "presentation": presentation})
 
     def ingest_full(self, sessions: list[dict[str, Any]], speaker: dict[str, Any],
                     mic: dict[str, Any], outputs: list[dict], inputs: list[dict],

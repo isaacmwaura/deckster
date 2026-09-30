@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "license": "CC0-1.0",
   "clips": [
     {
@@ -10,7 +10,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.82,
-      "sha256": "4986bd7e76a7114a25564a5cb137d11a62afcfd54b7f892c0e79acf0b0c625b3"
+      "sha256": "103066e59f5f9b3c6b51ce4324b96c6ccd0a2b6207edc7e81c52e834250d5820"
     },
     {
       "key": "rimshot",
@@ -30,7 +30,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.9,
-      "sha256": "56336a4dec09c0cf54f029e801c5d624e5dad5516d3c3aa434f3b58fea6218e5"
+      "sha256": "470eb85e2080edab1543d6e88074bec95d78193ead21abdffc1bc48d1b540223"
     },
     {
       "key": "air-horn",
@@ -40,7 +40,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.68,
-      "sha256": "80539796f3789192a565415bd1fb432475af9ad75c58a46fa634a150034b83ca"
+      "sha256": "4fff0454cf176fd1222bb915c99649cb1fcfe5315929947ee1a4dc4aea12d79b"
     },
     {
       "key": "sad-trombone",
@@ -50,7 +50,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.78,
-      "sha256": "625a027c26fca747c0fabe013afb6f5416032f9555ac6293450627e8f4f53733"
+      "sha256": "902412b10bcc4ea371adf669fa767468b95c84932534bb5f9cecbca9e2cb1927"
     },
     {
       "key": "record-scratch",
@@ -70,7 +70,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.78,
-      "sha256": "bb1b4e265405e0c3ae60112630c964ef7d122a133b0dfc5d98906232594c5b98"
+      "sha256": "34d25186d8d8326910ecf7f6a4c2efe157d6e36e671a41cba7cc04c23b70f5c3"
     },
     {
       "key": "censor-bleep",
@@ -110,7 +110,7 @@
       "voice": true,
       "ears": true,
       "gain": 0.9,
-      "sha256": "ec8b9a54297146818c23949404135b2e91c8d49be5e0ae52225166f83dfc46ae"
+      "sha256": "25092d991217e6aa62bec6733cd36c418d6e76e4a1470391445c2280ce21183e"
     },
     {
       "key": "pop",
@@ -121,6 +121,46 @@
       "ears": true,
       "gain": 0.95,
       "sha256": "81ba0ba308ab2b1de20ddf0038c04b6e2aa6a6e3929c54cc74f838f75794f13a"
+    },
+    {
+      "key": "fanfare",
+      "file": "fanfare.wav",
+      "label": "Fanfare",
+      "emoji": "\ud83c\udf89",
+      "voice": true,
+      "ears": true,
+      "gain": 0.8,
+      "sha256": "e1bd254dd2d4fb75988c2b29a1c7aeaba3e630b56c4e552183169b7b7eddd60c"
+    },
+    {
+      "key": "impact",
+      "file": "impact.wav",
+      "label": "Impact",
+      "emoji": "\ud83d\udca5",
+      "voice": true,
+      "ears": true,
+      "gain": 0.78,
+      "sha256": "0d89ecf65ac569ba8969d6705e96274660c8c7cf5dc77cf0dcd5b5915778bd4b"
+    },
+    {
+      "key": "laser",
+      "file": "laser.wav",
+      "label": "Laser",
+      "emoji": "\ud83d\udd2b",
+      "voice": true,
+      "ears": true,
+      "gain": 0.75,
+      "sha256": "81103b9e3fe64fbc0fc68dc42a25c9fae3e786194bfe4e0972dbb0bd0cc3ebde"
+    },
+    {
+      "key": "boing",
+      "file": "boing.wav",
+      "label": "Boing",
+      "emoji": "\ud83c\udf00",
+      "voice": true,
+      "ears": true,
+      "gain": 0.8,
+      "sha256": "5b74fb518765da2afb99358f81a2b69c16dfbbdd05ab35b81e2d5bea7fe124fa"
     }
   ]
 }

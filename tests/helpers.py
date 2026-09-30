@@ -68,7 +68,7 @@ def run(coro):
 
 @asynccontextmanager
 async def engine_client(registry=None, key_sender=None, authenticator=None,
-                        input_bindings=None, media=None, soundboard=None):
+                        input_bindings=None, media=None, soundboard=None, presentation=None):
     """Yield (client, state, controller) with an inline engine + aiohttp test server."""
     state = AppState()
     loop = asyncio.get_running_loop()
@@ -76,8 +76,9 @@ async def engine_client(registry=None, key_sender=None, authenticator=None,
     engine = InlineEngine(backend)
     controller = Controller(state, engine, loop, registry=registry,
                             input_bindings=input_bindings, media=media, soundboard=soundboard,
+                            presentation=presentation,
                             key_sender=key_sender)
-    if registry is not None or input_bindings is not None or soundboard is not None:
+    if registry is not None or input_bindings is not None or soundboard is not None or presentation is not None:
         controller.load_initial_macros()
     prime_state(state, backend)
     app = create_app(state, controller=controller.handle, authenticator=authenticator)

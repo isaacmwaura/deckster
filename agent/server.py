@@ -113,7 +113,11 @@ def create_app(
     app.router.add_get("/qr", _qr_page)
     # Settings surface — localhost-only (the .exe's control panel).
     app.router.add_get("/admin", _admin_page)
+    app.router.add_get("/admin/qr", _desktop_qr)
     app.router.add_get("/admin/api/state", _admin_state)
+    app.router.add_get("/admin/api/workspace", _desktop_state)
+    app.router.add_post("/admin/api/workspace", _desktop_action)
+    app.router.add_post("/admin/api/import", _desktop_import)
     app.router.add_post("/admin/api/mode", _admin_mode)
     app.router.add_post("/admin/api/secure", _admin_secure)
     app.router.add_post("/admin/api/pair/refresh", _admin_pair_refresh)
@@ -130,8 +134,81 @@ def create_app(
     return app
 
 
+def create_desktop_app(state: AppState, controller, admin) -> web.Application:
+    """A dedicated loopback renderer origin, independent of phone TLS.
+
+    No phone sockets or pairing transport are exposed on this listener.
+    Numeric Host validation prevents DNS rebinding; every write requires Origin.
+    """
+    @web.middleware
+    async def local_origin(request, handler):
+        host = request.host.split(":", 1)[0]
+        if not _is_local(request) or host != "127.0.0.1":
+            return web.json_response({"error": "Local desktop access only"}, status=403)
+        if request.method not in {"GET", "HEAD"} and request.headers.get("Origin") != f"http://{request.host}":
+            return web.json_response({"error": "Desktop origin required"}, status=403)
+        response = await handler(request)
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    app = web.Application(middlewares=[local_origin], client_max_size=64 * 1024 * 1024)
+    app[STATE_KEY] = state
+    app[CONTROLLER_KEY] = controller
+    app[ADMIN_KEY] = admin
+    app.router.add_get("/", _index)
+    app.router.add_get("/admin", _admin_page)
+    app.router.add_get("/admin/qr", _desktop_qr)
+    app.router.add_get("/admin/api/workspace", _desktop_state)
+    app.router.add_post("/admin/api/workspace", _desktop_action)
+    app.router.add_post("/admin/api/import", _desktop_import)
+    for path, handler in (("mode", _admin_mode), ("secure", _admin_secure),
+                          ("pair/refresh", _admin_pair_refresh),
+                          ("device/revoke", _admin_revoke), ("autostart", _admin_autostart)):
+        app.router.add_post("/admin/api/" + path, handler)
+    app.router.add_get("/icon/{key}", _icon)
+    app.router.add_get("/media_thumb/{key}", _media_thumb)
+    app.router.add_static("/static/", WEB_DIR)
+    return app
+
+
+async def _desktop_import(request: web.Request) -> web.Response:
+    admin, err = _admin_guard(request)
+    if err is not None:
+        return err
+    if request.headers.get("Origin") != f"{request.scheme}://{request.host}":
+        return web.json_response({"error": "Desktop origin required"}, status=403)
+    import tempfile
+    from .soundboard import SUPPORTED_EXTENSIONS
+    try:
+        reader = await request.multipart()
+        part = await reader.next()
+        if part is None or part.name != "file" or not part.filename:
+            raise ValueError("Choose an audio file")
+        filename = Path(part.filename).name
+        suffix = Path(filename).suffix.lower()
+        if suffix not in SUPPORTED_EXTENSIONS:
+            raise ValueError("Choose a WAV, MP3, OGG, or FLAC file")
+        with tempfile.TemporaryDirectory(prefix="deckster-import-") as folder:
+            source = Path(folder) / ("upload" + suffix)
+            size = 0
+            with source.open("wb") as output:
+                while chunk := await part.read_chunk():
+                    size += len(chunk)
+                    if size > 64 * 1024 * 1024:
+                        raise ValueError("Choose an audio file smaller than 64 MB")
+                    output.write(chunk)
+            if not size:
+                raise ValueError("The audio file is empty")
+            clip = await asyncio.to_thread(admin._soundboard.import_clip, source, Path(filename).stem)
+        request.app[STATE_KEY].set_soundboard(admin.soundboard_state())
+        return web.json_response(clip)
+    except (ValueError, OSError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def _health(request: web.Request) -> web.Response:
-    return web.json_response({"ok": True})
+    return web.json_response({"ok": True, "app": "deckster"})
 
 
 async def _icon(request: web.Request) -> web.Response:
@@ -171,8 +248,12 @@ async def _qr_page(request: web.Request) -> web.Response:
     if not data:
         return web.Response(text="Pairing QR unavailable.", content_type="text/plain")
     url, code = data.get("url", ""), data.get("code", "")
+    from urllib.parse import urlencode
     sep = "&" if "?" in url else "?"
-    pair_url = f"{url}{sep}pair={code}"
+    params = {"pair": code}
+    if url.startswith("https://") and data.get("fingerprint"):
+        params["fp"] = data["fingerprint"]
+    pair_url = f"{url}{sep}{urlencode(params)}"
     png = qr_png_bytes(pair_url)
     img = ("data:image/png;base64," + base64.b64encode(png).decode()) if png else ""
     spaced = " ".join(code)  # easier to read/type
@@ -221,10 +302,26 @@ async def _json_body(request: web.Request) -> dict[str, Any]:
 async def _admin_page(request: web.Request) -> web.Response:
     if not _is_local(request):
         return web.Response(status=403, text="settings are localhost-only")
-    page = WEB_DIR / "admin.html"
+    page = WEB_DIR / "desktop.html"
     if not page.exists():
         return web.Response(text="settings page missing", content_type="text/plain")
     return web.FileResponse(page, headers={"Cache-Control": "no-cache"})
+
+
+async def _desktop_qr(request: web.Request) -> web.Response:
+    admin, err = _admin_guard(request)
+    if err is not None:
+        return err
+    import io
+    import qrcode
+    state = admin.state()
+    url = state["connectUrl"].rstrip("/") + "/?pair=" + state["pairCode"]
+    if state.get("fingerprint"):
+        url += "&fp=" + state["fingerprint"]
+    image = qrcode.make(url)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return web.Response(body=buffer.getvalue(), content_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 async def _admin_state(request: web.Request) -> web.Response:
@@ -232,6 +329,93 @@ async def _admin_state(request: web.Request) -> web.Response:
     if err:
         return err
     return web.json_response(admin.state())
+
+
+async def _desktop_state(request: web.Request) -> web.Response:
+    admin, err = _admin_guard(request)
+    if err is not None:
+        return err
+    from .routing import receiving_microphone
+    sound = admin.soundboard_state()
+    return web.json_response({"admin": admin.state(), "snapshot": request.app[STATE_KEY].snapshot(),
+                              "presentation": admin.presentation_state(), "soundboard": sound,
+                              "receivingMic": receiving_microphone(sound.get("config", {}), sound)})
+
+
+async def _desktop_action(request: web.Request) -> web.Response:
+    admin, err = _admin_guard(request)
+    if err is not None:
+        return err
+    # A website must not be able to send local audio/layout commands via CSRF.
+    if request.headers.get("Origin") != f"{request.scheme}://{request.host}":
+        return web.json_response({"error": "Desktop commands require the local workspace origin."}, status=403)
+    body = await _json_body(request)
+    action = body.get("action")
+    try:
+        if action == "presentation":
+            result = admin.configure_presentation(body.get("changes", {}), body.get("baseRevision"))
+        elif action == "defaults":
+            result = admin._presentation.restore_defaults(body.get("baseRevision"))
+            admin._publish_presentation(result)
+        elif action == "remove_clip":
+            admin.remove_soundboard_clip(str(body.get("id", "")))
+            result = admin.soundboard_state()
+            request.app[STATE_KEY].set_soundboard(result)
+        elif action == "starter_sounds":
+            await asyncio.to_thread(admin._soundboard.restore_defaults, reset=True)
+            result = admin.soundboard_state()
+            request.app[STATE_KEY].set_soundboard(result)
+        elif action == "revoke_all":
+            admin.revoke_all()
+            result = {"ok": True}
+        elif action == "firewall":
+            result = {"ok": await asyncio.to_thread(admin.allow_firewall)}
+        elif action == "audition":
+            await asyncio.to_thread(admin.audition_soundboard_clip, str(body.get("id", "")))
+            result = {"ok": True}
+        elif action == "stop":
+            admin._soundboard.stop_all()
+            request.app[STATE_KEY].set_soundboard(admin.soundboard_state())
+            result = {"ok": True}
+        elif action == "clip":
+            admin._soundboard.update_clip(str(body.get("id", "")), **body.get("changes", {}))
+            result = admin.soundboard_state()
+            request.app[STATE_KEY].set_soundboard(result)
+        elif action == "control":
+            command = body.get("command", {})
+            if command.get("t") not in {"set_volume", "set_mute", "set_default_output", "set_default_input", "media_control", "app_input_mute", "set_app_input_binding", "clear_app_input_binding"}:
+                raise ValueError("Use advanced controls for this action.")
+            controller = request.app[CONTROLLER_KEY]
+            if controller is None:
+                raise ValueError("Audio controls unavailable")
+            class Reply:
+                async def send(self, message):
+                    if message.get("t") == "error":
+                        raise ValueError(message.get("msg", "Command failed"))
+            await controller(Reply(), command)
+            result = {"ok": True}
+        elif action == "routing":
+            from .routing import route_issue
+            issue = route_issue(body.get("config", {}), admin.soundboard_state())
+            if issue:
+                raise ValueError(issue)
+            result = await asyncio.to_thread(admin.configure_soundboard, body["config"])
+            request.app[STATE_KEY].set_soundboard(result)
+        elif action == "test":
+            admin.test_soundboard_route(str(body.get("bus", "")))
+            result = {"ok": True}
+        elif action == "native":
+            admin.open_native()
+            result = {"ok": True}
+        else:
+            raise ValueError("Unknown workspace action")
+        return web.json_response(result)
+    except ValueError as exc:
+        from .presentation import RevisionConflict
+        return web.json_response({"error": str(exc)}, status=409 if isinstance(exc, RevisionConflict) else 400)
+    except Exception as exc:
+        log.exception("desktop action failed")
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def _admin_mode(request: web.Request) -> web.Response:

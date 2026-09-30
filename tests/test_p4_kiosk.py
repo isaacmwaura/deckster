@@ -4,6 +4,7 @@ The client-side hardening (reconnect/resume/wake-lock/SW registration) is verifi
 live in a headless browser, not here.
 """
 import pytest
+import socket
 from aiohttp.test_utils import TestClient, TestServer
 
 from agent import net
@@ -27,11 +28,20 @@ def test_port_exhausted_raises():
         net.find_available_port(8765, attempts=3, is_free=lambda h, p: False)
 
 
+def test_wildcard_probe_rejects_loopback_listener():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        assert not net._default_is_free("0.0.0.0", port)
+
+
 # ---- connect targets ------------------------------------------------------
 def test_connect_targets_loopback():
     c = net.connect_targets("loopback", 8765)
     assert c["url"] == "http://localhost:8765/"
     assert "adb reverse" in c["note"]
+    assert net.connect_targets("loopback", 8766, secure=True)["url"] == "https://localhost:8765/"
 
 
 def test_connect_targets_lan_uses_ip_and_port():
@@ -54,6 +64,7 @@ def test_pair_url_appends_code():
     assert _pair_url("http://localhost:8765/", "123456") == "http://localhost:8765/?pair=123456"
     # respects an existing query string
     assert _pair_url("http://host:9000/?x=1", "9") == "http://host:9000/?x=1&pair=9"
+    assert _pair_url("https://host:9000/", "9", "AA:BB") == "https://host:9000/?pair=9&fp=AA%3ABB"
 
 
 # ---- Runtime: live USB<->Wi-Fi toggle ------------------------------------
@@ -116,6 +127,17 @@ async def test_qr_page_renders_code_and_image():
         body = await r.text()
         assert "4 2 4 2 4 2" in body           # spaced code for readability
         assert "data:image/png;base64," in body  # embedded live QR
+
+
+async def test_https_qr_carries_certificate_pin(monkeypatch):
+    from agent import net
+    captured = []
+    monkeypatch.setattr(net, "qr_png_bytes", lambda url: captured.append(url) or b"png")
+    app = create_app(AppState(), pair_info=lambda: {
+        "url": "https://localhost:8765/", "code": "424242", "fingerprint": "AA:BB"})
+    async with TestClient(TestServer(app)) as c:
+        assert (await c.get("/qr")).status == 200
+    assert captured == ["https://localhost:8765/?pair=424242&fp=AA%3ABB"]
 
 
 async def test_qr_page_without_pair_info():

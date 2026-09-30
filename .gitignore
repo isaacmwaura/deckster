@@ -19,8 +19,7 @@ bin/*.exe
 # Rendered planning artifacts (regenerated from the HTML)
 stream-control-plan.pdf
 
-# Raw design handoff extraction (kept locally). The OUTPUT is preserved in the repo
-# as DESIGN-SPEC.md + docs/design-reference/ (prototypes), excluding support.js.
+# Local design handoff extraction and prototype runtime are not shipped.
 .design_ref/
 support.js
 ui_*.png

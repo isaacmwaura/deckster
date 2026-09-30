@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from .config import resource_root
 from .log import get_logger
+from .presentation import LEGACY_DEFAULT_KEYS
 
 log = get_logger("soundboard")
 
@@ -59,6 +60,15 @@ class SoundboardRenderer:
         self._voices: dict[str, list[dict[str, Any]]] = {"voice": [], "ears": []}
         self._np = None
         self._sd = None
+        self._failure = ""
+
+    def health_error(self) -> str:
+        if self._failure:
+            return self._failure
+        for stream in (self._voice_stream, self._ears_stream):
+            if stream is not None and not getattr(stream, "active", True):
+                return "Audio device stopped. Reconnect the device and apply Audio routing again."
+        return ""
 
     @staticmethod
     def _find_device(sd, wanted: str, kind: str) -> int:
@@ -85,6 +95,7 @@ class SoundboardRenderer:
 
     def start(self, input_name: str, voice_name: str, ears_name: str | None = None) -> None:
         self.close()
+        self._failure = ""
         try:
             import numpy as np
             import sounddevice as sd
@@ -126,8 +137,12 @@ class SoundboardRenderer:
             self._voices = {"voice": [], "ears": []}
 
     def trigger(self, clip_id: str, path: Path, gain: float, voice: bool, ears: bool) -> None:
-        if not self._voice_stream:
+        if self.health_error():
+            raise RuntimeError(self.health_error())
+        if voice and not self._voice_stream:
             raise RuntimeError("Choose a mic and a Voice endpoint before playing clips")
+        if ears and not voice and not self._ears_stream:
+            raise RuntimeError("Choose a monitoring output for pads with Me enabled")
         with self._lock:
             samples = self._clips.get(clip_id)
         if samples is None:
@@ -135,7 +150,7 @@ class SoundboardRenderer:
             with self._lock:
                 self._clips[clip_id] = samples
         with self._lock:
-            for bus, enabled in (("voice", voice), ("ears", ears)):
+            for bus, enabled in (("voice", voice), ("ears", ears and self._ears_stream is not None)):
                 self._voices[bus] = [item for item in self._voices[bus]
                                      if item["id"] != clip_id]
                 if enabled:
@@ -144,6 +159,8 @@ class SoundboardRenderer:
 
     def test_tone(self, bus: str) -> None:
         """Queue a quiet, short tone on exactly one configured output bus."""
+        if self.health_error():
+            raise RuntimeError(self.health_error())
         if bus not in ("voice", "ears"):
             raise ValueError("choose Voice or Ears")
         if self._voice_stream is None or (bus == "ears" and self._ears_stream is None):
@@ -164,6 +181,28 @@ class SoundboardRenderer:
         with self._lock:
             self._voices = {"voice": [], "ears": []}
 
+    def preview(self, path: Path, gain: float, output_name: str) -> None:
+        """Audition only on a physical playback endpoint, without opening a mic."""
+        self.close()
+        import numpy as np
+        import sounddevice as sd
+        self._np, self._sd = np, sd
+        self._failure = ""
+        samples = self._load(path)
+        device = self._find_device(sd, output_name, "output")
+        try:
+            self._ears_stream = sd.OutputStream(
+                device=device, channels=2, samplerate=self.sample_rate,
+                dtype="float32", callback=self._ears_callback,
+                extra_settings=sd.WasapiSettings(auto_convert=True))
+            with self._lock:
+                self._voices["ears"] = [{"id": "__preview__", "samples": samples,
+                                         "pos": 0, "gain": gain}]
+            self._ears_stream.start()
+        except Exception:
+            self.close()
+            raise
+
     def playing_ids(self) -> set[str]:
         with self._lock:
             return {voice["id"] for bus in self._voices.values() for voice in bus}
@@ -171,7 +210,16 @@ class SoundboardRenderer:
     def _load(self, path: Path):
         """Decode common clip formats to mono float32, resampled to the mixer rate."""
         np = self._np
-        if path.suffix.lower() == ".wav":
+        # libsndfile also accepts float and extensible WAV, which wave.open
+        # rejects on some Python versions. Keep the PCM fallback optional.
+        try:
+            import soundfile as sf
+        except ImportError:
+            sf = None
+        if sf is not None:
+            data, rate = sf.read(str(path), dtype="float32", always_2d=True)
+            data = self._downmix(data)
+        elif path.suffix.lower() == ".wav":
             with wave.open(str(path), "rb") as source:
                 channels, width, rate, frames = source.getnchannels(), source.getsampwidth(), source.getframerate(), source.getnframes()
                 if width not in (1, 2, 3, 4):
@@ -186,7 +234,7 @@ class SoundboardRenderer:
                 data = np.frombuffer(raw, dtype=dtype).astype(np.float32) / divisor
                 if offset:
                     data += offset
-            data = data.reshape(-1, channels).mean(axis=1)
+            data = self._downmix(data.reshape(-1, channels))
         else:
             try:
                 import soundfile as sf
@@ -196,11 +244,23 @@ class SoundboardRenderer:
             data = data.mean(axis=1)
         if not len(data):
             raise RuntimeError("clip is empty")
+        if not np.isfinite(data).all():
+            raise RuntimeError("clip contains invalid audio samples")
         if rate != self.sample_rate:
             new_len = max(1, round(len(data) * self.sample_rate / rate))
             data = np.interp(np.linspace(0, len(data) - 1, new_len),
                              np.arange(len(data)), data).astype(np.float32)
         return data
+
+    def _downmix(self, data):
+        """Avoid losing phase-inverted stereo effects in a mono microphone."""
+        np = self._np
+        mono = data.mean(axis=1)
+        energy = np.mean(data * data, axis=0)
+        strongest = int(np.argmax(energy))
+        if np.mean(mono * mono) < energy[strongest] * .01:
+            mono = data[:, strongest].copy()
+        return mono
 
     def _mix(self, bus: str, frames: int):
         np = self._np
@@ -225,7 +285,8 @@ class SoundboardRenderer:
             mixed = self._mix("voice", frames) + indata[:, 0]
             outdata[:] = self._np.clip(mixed, -1.0, 1.0)[:, None]
         except Exception as exc:  # noqa: BLE001 - PortAudio callbacks cannot propagate
-            self._on_error(str(exc)); outdata.fill(0)
+            self._failure = "Voice audio failed: " + str(exc)
+            self._on_error(self._failure); outdata.fill(0)
 
     def _ears_callback(self, outdata, frames, _time, status) -> None:
         if status:
@@ -233,7 +294,8 @@ class SoundboardRenderer:
         try:
             outdata[:] = self._mix("ears", frames)[:, None]
         except Exception as exc:  # noqa: BLE001
-            self._on_error(str(exc)); outdata.fill(0)
+            self._failure = "Monitor audio failed: " + str(exc)
+            self._on_error(self._failure); outdata.fill(0)
 
 
 class SoundboardService:
@@ -247,6 +309,7 @@ class SoundboardService:
         self._path = self.clips_dir / "library.json"
         self._renderer_factory = renderer_factory
         self._renderer: SoundboardRenderer | None = None
+        self._preview_renderer: SoundboardRenderer | None = None
         self._lock = threading.RLock()
         self._error = ""
         self._playing: set[str] = set()
@@ -323,6 +386,11 @@ class SoundboardService:
         old_gains = {"applause": .72, "success": .78, "wrong": .76,
                      "bell": .76, "pop": .82}
         with self._lock:
+            # Releases before presentation.json did not remember removed defaults.
+            # All twelve original keys count as known, even when the user deleted
+            # them; only genuinely new manifest keys may be added automatically.
+            known = set(self._data.get("defaultPackKeys") or LEGACY_DEFAULT_KEYS)
+            installed_keys = {str(c.get("defaultKey")) for c in self._data["clips"]}
             for clip in self._data["clips"]:
                 entry = next((item for item in manifest["clips"]
                               if item["key"] == clip.get("defaultKey")), None)
@@ -333,6 +401,22 @@ class SoundboardService:
                 if (clip.get("defaultKey") in old_gains and
                         clip.get("gain") == old_gains[clip["defaultKey"]]):
                     clip["gain"] = _clamp(entry.get("gain", clip["gain"]))
+            for entry in manifest["clips"]:
+                key = str(entry["key"])
+                if key in known or key in installed_keys:
+                    continue
+                source = self.defaults_root / str(entry["file"])
+                destination_name = f"default-{key}{source.suffix.lower()}"
+                shutil.copy2(source, self.clips_dir / destination_name)
+                self._data["clips"].append({
+                    "id": f"default-{key}", "defaultKey": key,
+                    "file": destination_name, "label": str(entry.get("label", key))[:48],
+                    "emoji": str(entry.get("emoji", "♪"))[:48],
+                    "voice": bool(entry.get("voice", True)),
+                    "ears": bool(entry.get("ears", True)),
+                    "gain": _clamp(entry.get("gain", 1.0)),
+                })
+            self._data["defaultPackKeys"] = [str(e["key"]) for e in manifest["clips"]]
             self._data["defaultPackVersion"] = int(manifest["version"])
             self._save()
 
@@ -373,6 +457,7 @@ class SoundboardService:
                     except OSError:
                         log.warning("could not remove retired default sound %s", filename)
             self._data["clips"] = installed + custom
+            self._data["defaultPackKeys"] = [str(e["key"]) for e in manifest["clips"]]
             self._data["defaultPackVersion"] = int(manifest["version"])
             self._save()
             return len(installed)
@@ -384,11 +469,12 @@ class SoundboardService:
             playing = self._playing
             if self._renderer is not None and hasattr(self._renderer, "playing_ids"):
                 playing = self._renderer.playing_ids()
+            health = self._renderer.health_error() if self._renderer is not None and hasattr(self._renderer, "health_error") else ""
             return {"clips": [dict(c, playing=c["id"] in playing,
                                    duration=self._clip_duration(c)) for c in self._data["clips"]],
                     "config": dict(self._data["config"]), "configured": configured,
-                    "runtime": "ready" if self._renderer else "setup_required",
-                    "error": self._error, "outputs": outputs or [], "inputs": inputs or []}
+                    "runtime": "ready" if self._renderer and not health else "setup_required",
+                    "error": health or self._error, "outputs": outputs or [], "inputs": inputs or []}
 
     def _clip_duration(self, clip: dict[str, Any]) -> float:
         """Read clip length for the phone's playback indicator."""
@@ -531,12 +617,16 @@ class SoundboardService:
                 raise RuntimeError("the clip file is missing")
             self._renderer.trigger(clip_id, path, float(clip.get("gain", 1.0)),
                                    bool(clip.get("voice")), bool(clip.get("ears")))
+            log.info("soundboard trigger accepted clip=%s voice=%s ears=%s gain=%.2f",
+                     clip_id, bool(clip.get("voice")), bool(clip.get("ears")), float(clip.get("gain", 1.0)))
             self._playing.add(clip_id)
 
     def stop_all(self) -> None:
         with self._lock:
             if self._renderer:
                 self._renderer.stop_all()
+            if self._preview_renderer:
+                self._preview_renderer.stop_all()
             self._playing.clear()
 
     def test_tone(self, bus: str) -> None:
@@ -545,7 +635,26 @@ class SoundboardService:
                 raise RuntimeError(self._error or "Apply the routing first")
             self._renderer.test_tone(bus)
 
+    def audition(self, clip_id: str, outputs: list[dict[str, Any]]) -> None:
+        from .routing import is_virtual
+        with self._lock:
+            clip = next((c for c in self._data["clips"] if c["id"] == clip_id), None)
+            if clip is None:
+                raise ValueError("unknown soundboard clip")
+            physical = [d for d in outputs if not is_virtual(d)]
+            selected = self._data["config"].get("earsOutputId")
+            output = next((d for d in physical if d["id"] == selected), None)
+            output = output or next((d for d in physical if d.get("isDefault")), None)
+            if output is None:
+                raise RuntimeError("Choose physical headphones/speakers to audition sounds")
+            if self._preview_renderer is None:
+                self._preview_renderer = SoundboardRenderer()
+            self._preview_renderer.preview(self.clips_dir / clip["file"],
+                                           float(clip.get("gain", 1)), output["name"])
+
     def close(self) -> None:
         with self._lock:
+            if self._preview_renderer:
+                self._preview_renderer.close(); self._preview_renderer = None
             if self._renderer:
                 self._renderer.close(); self._renderer = None

@@ -10,14 +10,24 @@
 from __future__ import annotations
 
 import socket
+import sys
 from pathlib import Path
 from typing import Callable
+
+
+USB_PHONE_PORT = 8765
 
 
 def _default_is_free(host: str, port: int) -> bool:
     """True if we can bind host:port right now."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        if sys.platform == "win32":
+            # SO_REUSEADDR=0 does not exclude another Windows listener bound to
+            # 127.0.0.1 when this probe binds 0.0.0.0. The later wildcard bind
+            # can succeed yet adb reverse reaches the other listener instead.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
         try:
             s.bind((host, port))
             return True
@@ -63,7 +73,9 @@ def connect_targets(mode: str, port: int, secure: bool = False) -> dict[str, obj
         note = "Open this on the phone while it is on the same Wi-Fi."
     else:
         # Wired USB-C: the phone reaches the agent via adb reverse on its own localhost.
-        primary = f"{scheme}://localhost:{port}/"
+        # The phone port stays stable while adb reverse can map it to a fallback
+        # host port when another Windows program owns 127.0.0.1:8765.
+        primary = f"{scheme}://localhost:{USB_PHONE_PORT}/"
         note = "Wired USB-C: after adb reverse, open this in the phone's browser."
     return {"mode": mode, "url": primary, "port": port, "note": note, "secure": secure}
 

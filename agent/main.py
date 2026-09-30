@@ -34,7 +34,7 @@ from .net import connect_targets, find_available_port, write_qr_png
 from .security.allowlist import AllowList
 from .security.auth import DeviceAuthenticator
 from .security.pairing import PairingManager
-from .server import create_app
+from .server import create_app, create_desktop_app
 from .state import AppState
 from .soundboard import SoundboardService
 from .transport.adb import AdbReverse
@@ -43,15 +43,20 @@ from .window import run_window
 log = get_logger("main")
 
 
-def _pair_url(base_url: str, code: str) -> str:
-    """Append the pairing code to the connect URL as a query param."""
+def _pair_url(base_url: str, code: str, fingerprint: str = "") -> str:
+    """Append the pairing code and optional TLS pin to a trusted local QR URL."""
+    from urllib.parse import urlencode
     sep = "&" if "?" in base_url else "?"
-    return f"{base_url}{sep}pair={code}"
+    values = {"pair": code}
+    if fingerprint:
+        values["fp"] = fingerprint
+    return f"{base_url}{sep}{urlencode(values)}"
 
 
-def _write_pair_qr(connect_url: str, code: str):
-    """(Re)write the pairing QR encoding connect_url?pair=code. Returns the path."""
-    return write_qr_png(_pair_url(connect_url, code), data_dir() / "connect_qr.png")
+def _write_pair_qr(connect_url: str, code: str, fingerprint: str = ""):
+    """(Re)write the QR with pairing code and the HTTPS certificate pin."""
+    pin = fingerprint if connect_url.startswith("https://") else ""
+    return write_qr_png(_pair_url(connect_url, code, pin), data_dir() / "connect_qr.png")
 
 
 class Runtime:
@@ -64,16 +69,18 @@ class Runtime:
     """
 
     def __init__(self, mode: str, port: int, pairing: PairingManager,
-                 settings: dict, ssl_ctx=None, advertiser=None) -> None:
+                 settings: dict, ssl_ctx=None, advertiser=None, fingerprint: str = "") -> None:
         self.port = port
         self._pairing = pairing
         self._settings = settings
         self._ssl_ctx = ssl_ctx                       # loaded once; used only when secure
+        self.fingerprint = fingerprint
         self._advertiser = advertiser                 # mDNS (LAN only); best-effort
         self.secure = bool(settings.get("secure"))
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self.desktop_starting = True
         self.set_mode(mode)
 
     def set_mode(self, mode: str) -> None:
@@ -81,7 +88,7 @@ class Runtime:
         self.mode = mode
         self.connect = connect_targets(mode, self.port, self.secure)
         self.qr_path = _write_pair_qr(str(self.connect["url"]),
-                                      self._pairing.current_code())
+                                      self._pairing.current_code(), self.fingerprint)
 
     def bind_host(self) -> str:
         return BIND_LOOPBACK if self.mode == "loopback" else BIND_LAN
@@ -92,7 +99,8 @@ class Runtime:
 
     def pair_info(self) -> dict[str, str]:
         """Live pairing info for the /qr page — always the current URL + code."""
-        return {"url": str(self.connect["url"]), "code": self._pairing.current_code()}
+        return {"url": str(self.connect["url"]), "code": self._pairing.current_code(),
+                "fingerprint": self.fingerprint if self.secure else ""}
 
     def attach(self, runner: web.AppRunner, site: web.TCPSite,
                loop: asyncio.AbstractEventLoop) -> None:
@@ -215,7 +223,8 @@ def _start_tray(stop: threading.Event, runtime: Runtime, pairing: PairingManager
         def show_code(icon, item):  # noqa: ANN001
             code = pairing.refresh()
             # Keep the QR in sync so scanning stays the primary path after a refresh.
-            runtime.qr_path = _write_pair_qr(str(runtime.connect["url"]), code)
+            runtime.qr_path = _write_pair_qr(str(runtime.connect["url"]), code,
+                                             runtime.fingerprint)
             path = runtime.qr_path
             log.info("PAIRING CODE: %s (QR refreshed at %s)", code, path)
             if path and os.path.exists(path):
@@ -296,6 +305,21 @@ async def _run_server(runtime: Runtime, state: AppState, stop: asyncio.Event,
                        ssl_context=runtime.ssl_context())
     await site.start()
     runtime.attach(runner, site, asyncio.get_running_loop())
+    desktop_runner = None
+    if admin is not None:
+        desktop_runner = web.AppRunner(create_desktop_app(state, controller, admin))
+        try:
+            await desktop_runner.setup()
+            desktop_site = web.TCPSite(desktop_runner, "127.0.0.1", 0)
+            await desktop_site.start()
+            address = desktop_runner.addresses[0]
+            runtime.desktop_url = f"http://127.0.0.1:{address[1]}/admin"
+        except Exception:
+            await desktop_runner.cleanup()
+            desktop_runner = None
+            log.exception("local desktop listener unavailable; native fallback remains available")
+        finally:
+            runtime.desktop_starting = False
     log.info("Deckster %s listening on http://%s:%d (%s mode)", __version__,
              runtime.bind_host(), runtime.port, runtime.mode)
     # Now that the server answers, pop the QR page for a first-time pairing.
@@ -313,6 +337,8 @@ async def _run_server(runtime: Runtime, state: AppState, stop: asyncio.Event,
     finally:
         if media is not None:
             await media.stop()
+        if desktop_runner is not None:
+            await desktop_runner.cleanup()
         await runner.cleanup()
         log.info("server stopped")
 
@@ -328,6 +354,11 @@ def main() -> None:
     parser.add_argument("--mock", action="store_true",
                         help="use the in-memory mock audio backend (headless testing)")
     args = parser.parse_args()
+
+    from .single_instance import SingleInstance
+    instance = SingleInstance(data_dir(), show_existing=not args.start_hidden)
+    if not instance.primary:
+        return
 
     settings = load_settings()
     if args.port is not None:
@@ -346,6 +377,8 @@ def main() -> None:
     # Created before the desktop window so its clip importer can use the same
     # service instance as the phone controller.
     soundboard = SoundboardService(data_dir())
+    from .presentation import PresentationService
+    presentation = PresentationService(data_dir(), soundboard)
 
     # --- security stack ---------------------------------------------------
     salt = settings["token_salt"]
@@ -373,10 +406,11 @@ def main() -> None:
     # Live connection state (mode/connect target/QR). QR is the primary pairing
     # path: it encodes the connect URL *with* the current pairing code, so scanning
     # both opens the page and pairs in one step. Regenerated when the code changes.
-    runtime = Runtime(mode, port, pairing, settings, ssl_ctx=ssl_ctx, advertiser=advertiser)
+    runtime = Runtime(mode, port, pairing, settings, ssl_ctx=ssl_ctx,
+                      advertiser=advertiser, fingerprint=fingerprint)
     # Settings surface (localhost-only): the .exe's control panel.
     admin = Admin(runtime, pairing, allowlist, fingerprint=fingerprint,
-                  audio_state=state, soundboard=soundboard)
+                  audio_state=state, soundboard=soundboard, presentation=presentation)
 
     # Safety: LAN mode exposes the agent to the network and has no TLS yet.
     if runtime.mode == "lan":
@@ -394,11 +428,13 @@ def main() -> None:
     # Wired USB-C: (re)apply adb reverse whenever the phone connects. Harmless in
     # LAN mode (the phone uses the LAN URL instead of the reversed localhost).
     adb = AdbReverse(port)
-    adb.start_watcher()
+    if not args.mock:
+        adb.start_watcher()
 
     stop_thread = threading.Event()
     cmd_queue: "queue.Queue" = queue.Queue()
     if not args.no_tray:
+        instance.watch_show_requests(cmd_queue, stop_thread)
         # Deckster's own window (its own UI thread) + a tray icon for the background.
         icon_png = str(resource_root() / "web" / "icon-64.png")
         threading.Thread(target=run_window,
@@ -410,6 +446,7 @@ def main() -> None:
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    admin.set_loop(loop)
     stop_async = asyncio.Event()
 
     # Audio engine (own COM thread) + controller (bridges engine <-> state <-> wire).
@@ -419,7 +456,8 @@ def main() -> None:
     bindings = AppInputBindings(data_dir() / "app_bindings.json")
     media = MediaService(state, loop)
     controller = Controller(state, engine, loop, registry=registry,
-                            input_bindings=bindings, media=media, soundboard=soundboard)
+                            input_bindings=bindings, media=media, soundboard=soundboard,
+                            presentation=presentation)
     controller.load_initial_macros()
     engine.set_on_poll(controller.make_on_poll())
     try:
@@ -449,6 +487,7 @@ def main() -> None:
         soundboard.close()
         engine.stop()
         loop.close()
+        instance.close()
 
 
 if __name__ == "__main__":

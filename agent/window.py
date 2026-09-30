@@ -232,6 +232,7 @@ class DecksterWindow:
                                   ("devices", "☷", "Devices"),
                                   ("routing", "⇄", "Audio routing"),
                                   ("soundboard", "♪", "Soundboard"),
+                                  ("phone_layout", "▦", "Phone layout"),
                                   ("settings", "⚙", "Settings"),
                                   ("about", "ⓘ", "About")):
             self._nav[key] = self._make_nav(key, glyph, label)
@@ -271,6 +272,7 @@ class DecksterWindow:
             "devices": self._build_devices(),
             "routing": self._build_routing(),
             "soundboard": self._build_soundboard(),
+            "phone_layout": self._build_phone_layout(),
             "settings": self._build_settings(),
             "about": self._build_about(),
         }
@@ -315,7 +317,8 @@ class DecksterWindow:
         self.sections[key].pack(fill="both", expand=True)
         self.active_section = key
         self.page_title.config(text={"connect": "Connect a phone", "devices": "Paired devices",
-                                     "routing": "Audio routing", "soundboard": "Soundboard", "settings": "Settings",
+                                     "routing": "Audio routing", "soundboard": "Soundboard",
+                                     "phone_layout": "Phone layout", "settings": "Settings",
                                      "about": "About Deckster"}.get(key, "Deckster"))
         for k, n in self._nav.items():
             active = k == key
@@ -424,6 +427,10 @@ class DecksterWindow:
         """Clip library; device setup has its own guided routing page."""
         import tkinter as tk
         f = tk.Frame(self.content, bg=BG)
+        tk.Label(f, text="Arrange the 12 phone pads from the clip library in Phone layout.",
+                 bg=BG, fg=SUB, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 5))
+        PillButton(f, "Open phone pad layout", lambda: self._show_section("phone_layout"),
+                   kind="primary", width=180).pack(anchor="w", pady=(0, 10))
         PillButton(f, "Open audio routing", lambda: self._show_section("routing"),
                    width=185, bg=BG).pack(anchor="w", pady=(0, 12))
         tk.Label(f, text="SOUNDBOARD CLIPS", bg=BG, fg=SUB,
@@ -440,11 +447,11 @@ class DecksterWindow:
         actions.pack(fill="x", padx=10, pady=(0, 10))
         PillButton(actions, "Add audio clip", self._import_soundboard_clip, kind="primary",
                    width=150, height=34, bg=CARD, radius=9).pack(side="left")
-        PillButton(actions, "Remove selected", self._remove_soundboard_clip, kind="danger",
+        PillButton(actions, "Delete from library", self._remove_soundboard_clip, kind="danger",
                    width=142, height=34, bg=CARD, radius=9).pack(side="right")
         defaults = tk.Frame(card, bg=CARD)
         defaults.pack(fill="x", padx=10, pady=(0, 10))
-        PillButton(defaults, "Restore 12 starter sounds", self._restore_soundboard_defaults,
+        PillButton(defaults, "Restore starter sounds", self._restore_soundboard_defaults,
                    width=190, height=32, bg=CARD, radius=9).pack(side="left")
         self.soundboard_note = tk.Label(
             f, text="Others = your call/game. Me = your headphones/speakers. Choose each clip’s destinations on the phone.",
@@ -452,6 +459,11 @@ class DecksterWindow:
         )
         self.soundboard_note.pack(fill="x", pady=(9, 0))
         return f
+
+    def _build_phone_layout(self):
+        from .layout_panel import PhoneLayoutPanel
+        self.layout_panel = PhoneLayoutPanel(self.content, self.admin)
+        return self.layout_panel
 
     def _build_about(self):
         import tkinter as tk
@@ -523,7 +535,7 @@ class DecksterWindow:
             return
         sel = self.soundboard_clips.curselection()
         if sel and sel[0] < len(self._soundboard_clip_ids):
-            try: self.soundboard.remove_clip(self._soundboard_clip_ids[sel[0]])
+            try: self.admin.remove_soundboard_clip(self._soundboard_clip_ids[sel[0]])
             except Exception: log.exception("remove soundboard clip")
     def _restore_soundboard_defaults(self):
         if self.soundboard is None:
@@ -534,6 +546,19 @@ class DecksterWindow:
     def _hide(self):
         self.root.withdraw()
     def _show(self):
+        if self.admin.state().get("desktopStarting"):
+            # Audio initialization may take longer than the first window timer.
+            # Wait for the HTML listener instead of opening native controls early.
+            self.root.after(250, self._show)
+            return
+        from .desktop import open_workspace
+        try:
+            if open_workspace(self.admin):
+                return
+        except Exception:
+            log.exception("desktop workspace unavailable; opening native controls")
+        self._show_native()
+    def _show_native(self):
         self.root.deiconify(); self.root.lift(); self.root.focus_force()
     def _quit(self):
         self.stop_event.set()      # triggers full app shutdown; _pump then closes the window
@@ -544,6 +569,7 @@ class DecksterWindow:
             while True:
                 cmd = self.cmd_queue.get_nowait()
                 if cmd == "show": self._show()
+                elif cmd == "native": self._show_native()
                 elif cmd == "quit": self.stop_event.set()
         except queue.Empty:
             pass
@@ -572,6 +598,7 @@ class DecksterWindow:
             self._fill_devices(s.get("devices", []))
             self.routing_panel.update_snapshot(self.admin.soundboard_state())
             self._fill_soundboard_clips()
+            self.layout_panel.update_snapshot(self.admin.presentation_state())
             self._update_qr(s.get("qrPath", ""))
         except Exception:  # noqa: BLE001
             log.exception("window refresh")
@@ -642,6 +669,11 @@ class DecksterWindow:
 def run_window(admin, stop_event, cmd_queue, icon_path=None, soundboard=None, start_hidden=False):
     """Entry for the window thread. Best-effort: never crash the app if Tk is absent."""
     try:
-        DecksterWindow(admin, stop_event, cmd_queue, icon_path, soundboard, start_hidden).run()
+        admin.open_native = lambda: cmd_queue.put("native")
+        window = DecksterWindow(admin, stop_event, cmd_queue, icon_path, soundboard, True)
+        if not start_hidden:
+            # Let the server finish listening before showing the workspace.
+            window.root.after(1800, window._show)
+        window.run()
     except Exception as exc:  # noqa: BLE001
         log.info("window unavailable (%s); running with tray only", exc)

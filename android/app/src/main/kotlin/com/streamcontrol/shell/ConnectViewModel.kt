@@ -2,6 +2,7 @@ package com.streamcontrol.shell
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import androidx.lifecycle.AndroidViewModel
@@ -104,8 +105,20 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     fun connectUrl(url: String, fingerprint: String = "") {
         stopDiscovery()
         val norm = normalize(url)
-        store.rememberPcFromUrl(norm, fingerprint, "PC")   // query (?pair=) is ignored
-        _state.value = UiState.Connected(norm, fingerprint)
+        val parsed = Uri.parse(norm)
+        val qrPin = parsed.getQueryParameter("fp") ?: ""
+        val pin = (fingerprint.ifBlank { qrPin }).takeIf {
+            it.matches(Regex("(?i)([0-9a-f]{2}:){31}[0-9a-f]{2}"))
+        } ?: ""
+        // The QR's pin configures native TLS verification; it is not sent to
+        // the page. Keep the pair code for the existing one-time pairing flow.
+        val clean = parsed.buildUpon().clearQuery().apply {
+            parsed.queryParameterNames.filter { it != "fp" }.forEach { key ->
+                parsed.getQueryParameters(key).forEach { value -> appendQueryParameter(key, value) }
+            }
+        }.build().toString()
+        store.rememberPcFromUrl(clean, pin, "PC")
+        _state.value = UiState.Connected(clean, pin)
     }
 
     /**
@@ -121,11 +134,21 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
         handoffMode = false
         _state.value = UiState.Searching
         viewModelScope.launch {
-            if (withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health") }) {
+            val last = store.lastPc()
+            val pin = last?.fingerprint ?: ""
+            val usbTls = withContext(Dispatchers.IO) {
+                Net.reachablePinned("https://localhost:$port/health", pin)
+            }
+            if (usbTls == Net.PinnedProbe.VERIFIED) {
+                // Keep the remembered LAN host and pin for USB→Wi-Fi handoff.
+                _state.value = UiState.Connected("https://localhost:$port/", pin); return@launch
+            }
+            if (usbTls == Net.PinnedProbe.UNAVAILABLE &&
+                withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health") }) {
                 _state.value = UiState.Connected("http://localhost:$port/", ""); return@launch
             }
-            val last = store.lastPc()
-            if (last != null && last.url.startsWith("http://")) {   // https can't be probed w/o the pin
+            if (usbTls == Net.PinnedProbe.UNAVAILABLE &&
+                last != null && last.url.startsWith("http://")) {   // LAN HTTP fallback
                 val health = last.url.trimEnd('/') + "/health"
                 if (withContext(Dispatchers.IO) { Net.reachable(health) }) {
                     connect(last); return@launch
@@ -174,6 +197,8 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
                 // After a USB drop we OFFER the first PC we find on the LAN rather than
                 // auto-connecting — the user confirms the move to Wi-Fi (see onConnectionLost).
                 if (handoffMode) {
+                    val knownFp = store.lastPcFingerprint()
+                    if (knownFp.isNotEmpty() && !fp.equals(knownFp, ignoreCase = true)) return
                     handoffMode = false; stopDiscovery()
                     if (_state.value is UiState.Connected) _state.value = UiState.OfferWifi(pc)
                     return
