@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import queue
 import threading
+from pathlib import Path
 
 from aiohttp import web
 
@@ -80,6 +81,15 @@ class Runtime:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._request_lock = threading.RLock()
+        self._rebind_lock = asyncio.Lock()
+        self._rebind_task: asyncio.Task | None = None
+        self._generation = 0
+        self._active_generation = 0
+        self._active_mode: str | None = None
+        self._active_secure: bool | None = None
+        self._connection_error = ""
+        self._closing = False
         self.desktop_starting = True
         self.set_mode(mode)
 
@@ -87,28 +97,46 @@ class Runtime:
         """Update mode + the derived connect target/QR (no socket work)."""
         self.mode = mode
         self.connect = connect_targets(mode, self.port, self.secure)
-        self.qr_path = _write_pair_qr(str(self.connect["url"]),
-                                      self._pairing.current_code(), self.fingerprint)
+        try:
+            self.qr_path = _write_pair_qr(str(self.connect["url"]),
+                                          self._pairing.current_code(), self.fingerprint)
+        except Exception:
+            self.qr_path = None
+            log.exception("pairing QR write unavailable; manual pairing and listener transition remain available")
 
     def bind_host(self) -> str:
         return BIND_LOOPBACK if self.mode == "loopback" else BIND_LAN
 
     def ssl_context(self):
         """The SSL context to bind with, or None when running plain HTTP."""
+        if self.secure and self._ssl_ctx is None:
+            raise RuntimeError("Secure connection requested but TLS is unavailable")
         return self._ssl_ctx if self.secure else None
+
+    def connection_health(self) -> dict:
+        with self._request_lock:
+            return {"requested": {"mode": self.mode, "secure": self.secure},
+                    "active": {"mode": self._active_mode, "secure": self._active_secure},
+                    "generation": self._generation,
+                    "activeGeneration": self._active_generation,
+                    "transitioning": bool(self._rebind_task and not self._rebind_task.done()),
+                    "ready": self._site is not None and not self._connection_error,
+                    "error": self._connection_error}
 
     def pair_info(self) -> dict[str, str]:
         """Live pairing info for the /qr page — always the current URL + code."""
         return {"url": str(self.connect["url"]), "code": self._pairing.current_code(),
                 "fingerprint": self.fingerprint if self.secure else ""}
 
-    def attach(self, runner: web.AppRunner, site: web.TCPSite,
+    def attach(self, runner: web.AppRunner, site: web.TCPSite | None,
                loop: asyncio.AbstractEventLoop) -> None:
         """Record the running server handles so a later toggle can rebind."""
         self._runner = runner
         self._site = site
         self._loop = loop
-        if self.mode == "lan" and self._advertiser is not None:
+        self._active_mode, self._active_secure = (self.mode, self.secure) if site is not None else (None, None)
+        self._active_generation = self._generation
+        if site is not None and self.mode == "lan" and self._advertiser is not None:
             self._advertiser.start()              # begin mDNS once we're actually listening
 
     def apply_mode(self, new_mode: str) -> str:
@@ -119,37 +147,54 @@ class Runtime:
         rebind on the server loop, and starts/stops mDNS advertising. No-op if already
         in that mode. Returns the current mode.
         """
-        if new_mode not in ("loopback", "lan") or new_mode == self.mode:
-            return self.mode
-        self.set_mode(new_mode)
-        self._settings["mode"] = new_mode
-        save_settings(self._settings)
+        with self._request_lock:
+            if new_mode not in ("loopback", "lan"):
+                return self.mode
+            if new_mode == self.mode:
+                if self._connection_error:
+                    self._schedule_rebind()
+                return self.mode
+            updated = dict(self._settings, mode=new_mode)
+            save_settings(updated)
+            self._settings.update(updated)
+            self.set_mode(new_mode)
+            self._generation += 1
         if new_mode == "lan":
             log.warning("LAN mode: agent reachable on the network%s; pairing token "
                         "still required for every command.",
                         " (TLS on)" if self.secure else " without TLS")
-        if self._advertiser is not None:
-            self._advertiser.start() if new_mode == "lan" else self._advertiser.stop()
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._rebind_socket()))
+        self._schedule_rebind()
         return new_mode
 
     def apply_secure(self, enabled: bool) -> bool:
         """Turn HTTPS on/off: rebuild the connect scheme + rebind with/without TLS."""
         enabled = bool(enabled)
-        if enabled == self.secure:
-            return self.secure
-        self.secure = enabled
-        self._settings["secure"] = enabled
-        save_settings(self._settings)
-        self.set_mode(self.mode)                  # refresh URL/QR to http(s) scheme
-        if self._advertiser is not None:
-            self._advertiser.set_secure(enabled)
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._rebind_socket()))
+        with self._request_lock:
+            if enabled == self.secure:
+                if self._connection_error:
+                    self._schedule_rebind()
+                return self.secure
+            updated = dict(self._settings, secure=enabled)
+            save_settings(updated)
+            self._settings.update(updated)
+            self.secure = enabled
+            self.set_mode(self.mode)
+            self._generation += 1
+        self._schedule_rebind()
         return self.secure
+
+    def _schedule_rebind(self) -> None:
+        if self._loop is None or self._closing:
+            return
+        def schedule():
+            if not self._closing and (self._rebind_task is None or self._rebind_task.done()):
+                self._rebind_task = asyncio.create_task(self._rebind_socket(), name="connection-supervisor")
+        self._loop.call_soon_threadsafe(schedule)
+
+    async def close(self) -> None:
+        self._closing = True
+        if self._rebind_task is not None:
+            await self._rebind_task
 
     def toggle(self) -> str:
         """Flip loopback<->LAN (convenience for the tray). Returns the new mode."""
@@ -163,27 +208,65 @@ class Runtime:
         """
         if self._runner is None:
             return
-        try:
-            if self._site is not None:
-                await self._site.stop()
-            self._site = web.TCPSite(self._runner, self.bind_host(), self.port,
-                                     ssl_context=self.ssl_context())
-            await self._site.start()
-            log.info("rebound: %s mode on %s:%d (%s)", self.mode, self.bind_host(),
-                     self.port, self.connect["url"])
-        except Exception:  # noqa: BLE001 - never leave the agent unreachable
-            log.exception("rebind failed; restoring plain loopback")
-            try:
-                self.secure = False
-                self.set_mode("loopback")
-                self._settings["mode"] = "loopback"
-                self._settings["secure"] = False
-                save_settings(self._settings)
-                self._site = web.TCPSite(self._runner, self.bind_host(), self.port,
-                                         ssl_context=None)
-                await self._site.start()
-            except Exception:  # noqa: BLE001
-                log.exception("failed to restore a listening socket")
+        async with self._rebind_lock:
+            while not self._closing:
+                with self._request_lock:
+                    generation, mode, secure = self._generation, self.mode, self.secure
+                if (self._site is not None and not self._connection_error and
+                        self._active_generation == generation and
+                        (self._active_mode, self._active_secure) == (mode, secure)):
+                    return
+                previous = (self._active_mode, self._active_secure)
+                candidate = None
+                try:
+                    if secure and self._ssl_ctx is None:
+                        raise RuntimeError("Secure connection requested but TLS is unavailable")
+                    if self._site is not None:
+                        await self._site.stop()
+                        self._site = None
+                    candidate = web.TCPSite(self._runner,
+                        BIND_LOOPBACK if mode == "loopback" else BIND_LAN, self.port,
+                        ssl_context=self._ssl_ctx if secure else None)
+                    await candidate.start()
+                    self._site = candidate
+                    self._active_mode, self._active_secure = mode, secure
+                    self._active_generation = generation
+                    self._connection_error = ""
+                    if self._advertiser is not None:
+                        try:
+                            self._advertiser.set_secure(secure)
+                            self._advertiser.start() if mode == "lan" else self._advertiser.stop()
+                        except Exception:
+                            log.exception("listener active; optional discovery update failed")
+                except Exception as exc:
+                    self._connection_error = str(exc)
+                    log.exception("connection transition failed; preserving requested security settings")
+                    if candidate is not None:
+                        try:
+                            await candidate.stop()
+                        except Exception:
+                            log.exception("failed candidate listener cleanup")
+                    # Restore the last working configuration, including its TLS policy.
+                    # Never persist an insecure fallback over a user's secure preference.
+                    if self._site is None and previous[0] is not None:
+                        restored = None
+                        try:
+                            restored = web.TCPSite(self._runner,
+                                BIND_LOOPBACK if previous[0] == "loopback" else BIND_LAN,
+                                self.port, ssl_context=self._ssl_ctx if previous[1] else None)
+                            await restored.start()
+                            self._site = restored
+                        except Exception:
+                            if restored is not None:
+                                try:
+                                    await restored.stop()
+                                except Exception:
+                                    log.exception("failed restored listener cleanup")
+                            self._active_mode = self._active_secure = None
+                            log.exception("failed to restore last working listener")
+                with self._request_lock:
+                    if generation == self._generation:
+                        return
 
 
 def _make_backend_factory(use_mock: bool):
@@ -301,10 +384,10 @@ async def _run_server(runtime: Runtime, state: AppState, stop: asyncio.Event,
                      pair_info=runtime.pair_info, admin=admin)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, runtime.bind_host(), runtime.port,
-                       ssl_context=runtime.ssl_context())
-    await site.start()
-    runtime.attach(runner, site, asyncio.get_running_loop())
+    # The local console must remain available when the requested phone listener
+    # cannot start (including unavailable TLS). Never downgrade saved security.
+    runtime.attach(runner, None, asyncio.get_running_loop())
+    await runtime._rebind_socket()
     desktop_runner = None
     if admin is not None:
         desktop_runner = web.AppRunner(create_desktop_app(state, controller, admin))
@@ -320,10 +403,12 @@ async def _run_server(runtime: Runtime, state: AppState, stop: asyncio.Event,
             log.exception("local desktop listener unavailable; native fallback remains available")
         finally:
             runtime.desktop_starting = False
-    log.info("Deckster %s listening on http://%s:%d (%s mode)", __version__,
-             runtime.bind_host(), runtime.port, runtime.mode)
+    if runtime._site is not None:
+        log.info("Deckster %s listening on %s", __version__, runtime.connect["url"])
+    else:
+        log.error("phone listener unavailable; local desktop remains available: %s", runtime._connection_error)
     # Now that the server answers, pop the QR page for a first-time pairing.
-    if open_qr:
+    if open_qr and runtime._site is not None:
         try:
             import webbrowser
             webbrowser.open(open_qr)
@@ -335,6 +420,7 @@ async def _run_server(runtime: Runtime, state: AppState, stop: asyncio.Event,
     try:
         await stop.wait()
     finally:
+        await runtime.close()
         if media is not None:
             await media.stop()
         if desktop_runner is not None:
@@ -360,6 +446,14 @@ def main() -> None:
     if not instance.primary:
         return
 
+    import sys
+    if getattr(sys, "frozen", False) and not args.mock:
+        try:
+            from .desktop_shortcut import update_shortcut
+            update_shortcut(Path(sys.executable))
+        except Exception:
+            log.exception("Could not refresh the Desktop shortcut")
+
     settings = load_settings()
     if args.port is not None:
         settings["port"] = args.port
@@ -377,6 +471,12 @@ def main() -> None:
     # Created before the desktop window so its clip importer can use the same
     # service instance as the phone controller.
     soundboard = SoundboardService(data_dir())
+    meme_pack = resource_root() / "assets" / "meme-pack"
+    if (meme_pack / "manifest.json").is_file():
+        try:
+            soundboard.install_pack(meme_pack)
+        except Exception as exc:  # Library remains usable if an optional pack fails.
+            log.warning("Meme pack could not be installed: %s", exc)
     from .presentation import PresentationService
     presentation = PresentationService(data_dir(), soundboard)
 
@@ -484,6 +584,13 @@ def main() -> None:
         stop_thread.set()
         advertiser.close()
         adb.stop()
+        drained = loop.run_until_complete(controller.close())
+        if not drained:
+            log.error("shutdown awaiting native ownership; audio service and event loop retained")
+            # A deadline is a health report, not permission to close resources
+            # beneath a live native operation. Keep its loop alive until drained.
+            while not drained:
+                drained = loop.run_until_complete(controller.close(timeout_s=30))
         soundboard.close()
         engine.stop()
         loop.close()

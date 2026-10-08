@@ -135,12 +135,95 @@ async def test_workspace_commands_reject_cross_origin_and_missing_origin(client)
         assert response.status == 403
 
 
+async def test_cable_check_uses_saved_devices_and_retains_origin_guard(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from test_routing import devices
+    admin, _ = _admin(tmp_path)
+    sound = devices(); calls = []
+    monkeypatch.setattr(admin, "soundboard_state", lambda: sound)
+    def verify(outputs, inputs):
+        calls.append((outputs, inputs))
+        return {"passed": True, "receiver": "CABLE Output", "scope": "virtual_microphone"}
+    admin._soundboard = SimpleNamespace(verify_receiver=verify)
+    async with TestClient(TestServer(server.create_desktop_app(AppState(), None, admin))) as client:
+        origin = str(client.make_url("/")).rstrip("/")
+        for headers in ({}, {"Origin": "https://attacker.example"}):
+            response = await client.post("/admin/api/workspace", json={"action": "verify_receiver"}, headers=headers)
+            assert response.status == 403 and not calls
+        response = await client.post("/admin/api/workspace", json={"action": "verify_receiver", "receiver": "untrusted"}, headers={"Origin": origin})
+        assert response.status == 200 and (await response.json())["passed"]
+        assert calls == [(sound["outputs"], sound["inputs"])]
+
+
+async def test_recommended_route_applies_matching_cable_and_missing_cable_is_reported(tmp_path, monkeypatch):
+    from test_routing import devices
+    admin, _ = _admin(tmp_path)
+    sound = devices()
+    monkeypatch.setattr(admin, "soundboard_state", lambda: sound)
+    applied = []
+    monkeypatch.setattr(admin, "presentation_state", lambda: {})
+    monkeypatch.setattr(admin, "configure_soundboard", lambda config: applied.append(config) or sound)
+    async with TestClient(TestServer(server.create_desktop_app(AppState(), None, admin))) as client:
+        headers = {"Origin": str(client.make_url("/")).rstrip("/")}
+        response = await client.post("/admin/api/workspace", json={"action": "recommended_routing"}, headers=headers)
+        assert response.status == 200
+        assert applied[0]["voiceOutputId"] == "entry"
+        state = await (await client.get("/admin/api/workspace")).json()
+        assert state["cableAvailable"] is True
+        sound["outputs"] = sound["outputs"][:1]
+        state = await (await client.get("/admin/api/workspace")).json()
+        assert state["cableAvailable"] is False
+        response = await client.post("/admin/api/workspace", json={"action": "recommended_routing"}, headers=headers)
+        assert response.status == 400
+        assert len(applied) == 1
+
+
+async def test_use_mixer_input_requires_ready_route_and_selects_receiving_end(tmp_path, monkeypatch):
+    from agent.routing import recommend_route
+    from test_routing import devices
+    admin, _ = _admin(tmp_path)
+    sound = devices()
+    sound["config"] = recommend_route(sound)
+    monkeypatch.setattr(admin, "soundboard_state", lambda: sound)
+    commands = []
+    async def controller(reply, command):
+        commands.append(command)
+    async with TestClient(TestServer(server.create_desktop_app(AppState(), controller, admin))) as client:
+        headers = {"Origin": str(client.make_url("/")).rstrip("/")}
+        response = await client.post("/admin/api/workspace", json={"action": "use_mixer_input"}, headers=headers)
+        assert response.status == 400
+        assert not commands
+        sound["runtime"] = "ready"
+        response = await client.post("/admin/api/workspace", json={"action": "use_mixer_input", "deviceId": "mic"}, headers=headers)
+        assert response.status == 200
+        assert commands == [{"t": "set_default_input", "deviceId": "exit"}]
+
+
 async def test_workspace_routes_reject_lan_and_missing_admin(monkeypatch):
     async with TestClient(TestServer(create_app(AppState()))) as client:
         assert (await client.get("/admin/api/workspace")).status == 404
         monkeypatch.setattr(server, "_is_local", lambda request: False)
         assert (await client.get("/admin/api/workspace")).status == 403
         assert (await client.post("/admin/api/workspace", json={"action": "stop"})).status == 403
+
+
+async def test_signal_route_is_lightweight_and_keeps_admin_guards(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    admin, _ = _admin(tmp_path)
+    admin._soundboard = SimpleNamespace(signal_state=lambda: {"runtime": "ready", "levels": {"voice": .6}})
+    monkeypatch.setattr(admin, "soundboard_state", lambda: (_ for _ in ()).throw(AssertionError("Full library inspection")))
+    state = AppState()
+    state.devices = {"meters": {"input": .3}}
+    async with TestClient(TestServer(server.create_desktop_app(state, None, admin))) as client:
+        response = await client.get("/admin/api/signals")
+        assert response.status == 200
+        assert response.headers["Cache-Control"] == "no-store"
+        assert await response.json() == {"soundboard": {"runtime": "ready", "levels": {"voice": .6}}, "inputLevel": .3}
+        assert (await client.get("/admin/api/signals", headers={"Host": "attacker.example"})).status == 403
+    async with TestClient(TestServer(create_app(state))) as client:
+        assert (await client.get("/admin/api/signals")).status == 404
+        monkeypatch.setattr(server, "_is_local", lambda request: False)
+        assert (await client.get("/admin/api/signals")).status == 403
 
 
 async def test_admin_unavailable_when_not_injected():

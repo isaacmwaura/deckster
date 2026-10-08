@@ -85,6 +85,8 @@ class Admin:
             autostart_on = False
         return {
             "version": __version__,
+            "connection": (self._rt.connection_health()
+                           if hasattr(self._rt, "connection_health") else {}),
             "desktopUrl": getattr(self._rt, "desktop_url", ""),
             "desktopStarting": getattr(self._rt, "desktop_starting", False),
             "mode": self._rt.mode,                       # "loopback" (USB) | "lan" (Wi-Fi)

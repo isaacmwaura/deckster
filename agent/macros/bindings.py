@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,7 @@ class AppInputBindings:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._bindings: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
         self._load()
 
     # ---- persistence ------------------------------------------------------
@@ -48,24 +51,40 @@ class AppInputBindings:
 
     # ---- operations -------------------------------------------------------
     def list(self) -> dict[str, dict[str, Any]]:
-        return dict(self._bindings)
+        with self._lock:
+            return deepcopy(self._bindings)
 
     def get(self, app_id: str) -> dict[str, Any] | None:
-        return self._bindings.get(_norm_app_id(app_id))
+        with self._lock:
+            return deepcopy(self._bindings.get(_norm_app_id(app_id)))
 
     def set(self, app_id: str, keys: str, label: str | None = None) -> dict[str, Any]:
         """Bind an app id to a key combo. Raises ComboError if the combo is invalid."""
         parse_combo(keys)  # validation only; result discarded
         aid = _norm_app_id(app_id)
         binding = {"keys": keys.strip(), "label": (label or "").strip()[:60]}
-        self._bindings[aid] = binding
-        self._save()
-        return binding
+        with self._lock:
+            previous = self._bindings.get(aid)
+            self._bindings[aid] = binding
+            try:
+                self._save()
+            except Exception:
+                if previous is None:
+                    self._bindings.pop(aid, None)
+                else:
+                    self._bindings[aid] = previous
+                raise
+        return dict(binding)
 
     def remove(self, app_id: str) -> bool:
         aid = _norm_app_id(app_id)
-        if aid in self._bindings:
-            del self._bindings[aid]
-            self._save()
+        with self._lock:
+            if aid not in self._bindings:
+                return False
+            previous = self._bindings.pop(aid)
+            try:
+                self._save()
+            except Exception:
+                self._bindings[aid] = previous
+                raise
             return True
-        return False

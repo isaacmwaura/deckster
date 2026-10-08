@@ -18,6 +18,11 @@ class Store(context: Context) {
         get() = p.getString("token", "") ?: ""
         set(v) { p.edit().putString("token", v).apply() }
 
+    /** Preserve the mounted-screen behavior until the user chooses battery mode. */
+    var powerMode: String
+        get() = if (p.getString("power_mode", "mounted") == "battery") "battery" else "mounted"
+        set(v) { if (v == "mounted" || v == "battery") p.edit().putString("power_mode", v).apply() }
+
     /** Stable per-install device id; generated once and reused. */
     fun deviceId(): String {
         var id = p.getString("device_id", "") ?: ""

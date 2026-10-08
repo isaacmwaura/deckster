@@ -51,7 +51,7 @@ import java.util.concurrent.Executors
  *
  * The screen shows a targeting frame (with a sweeping scan line) the user aims the QR
  * into: only a code whose centre falls inside that frame is accepted. There's an
- * always-visible Close chip, Back also cancels, and the screen is kept awake.
+ * always-visible Close chip, Back also cancels, and mounted mode keeps the screen awake.
  */
 class QrScannerActivity : AppCompatActivity() {
 
@@ -72,7 +72,6 @@ class QrScannerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setResult(RESULT_CANCELED)                       // default outcome unless we deliver
 
         previewView = PreviewView(this)
@@ -96,6 +95,17 @@ class QrScannerActivity : AppCompatActivity() {
         } else {
             requestCamera.launch(Manifest.permission.CAMERA)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Store(this).powerMode == "mounted") window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    override fun onPause() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        super.onPause()
     }
 
     private fun startCamera() {

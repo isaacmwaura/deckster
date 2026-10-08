@@ -6,6 +6,23 @@ import pytest
 from agent.routing import cable_pairs, recommend_route, route_issue, receiving_microphone
 
 
+def test_windows_default_route_distinguishes_bypass_mixed_and_unknown():
+    from agent.routing import routing_status
+    snapshot = devices()
+    snapshot["config"] = recommend_route(snapshot)
+    snapshot["runtime"] = "ready"
+    assert routing_status(snapshot)["mode"] == "bypass"
+    assert routing_status(snapshot)["receiverId"] == "exit"
+    snapshot["inputs"][0]["isDefault"] = False
+    snapshot["inputs"][1]["isDefault"] = True
+    assert routing_status(snapshot)["mode"] == "mixed"
+    snapshot["runtime"] = "setup_required"
+    assert routing_status(snapshot)["mode"] == "unknown"
+    assert not routing_status(snapshot)["ready"]
+    snapshot["inputs"][1]["isDefault"] = False
+    assert routing_status(snapshot)["mode"] == "unknown"
+
+
 def devices():
     return {
         "inputs": [{"id": "mic", "name": "Microphone (Realtek)", "isDefault": True},

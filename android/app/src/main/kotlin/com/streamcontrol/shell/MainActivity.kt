@@ -9,10 +9,12 @@ import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.activity.viewModels
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,18 +28,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.streamcontrol.shell.ui.ConnectScreen
 import com.streamcontrol.shell.ui.ErrorScreen
 
@@ -50,14 +58,41 @@ private val BG = Color(0xFF0B0E14)
  * the manifest; here it adds immersive fullscreen and keep-awake.
  */
 class MainActivity : AppCompatActivity() {
+    private val vm: ConnectViewModel by viewModels()
+    private var foreground by mutableStateOf(false)
+    private var powerMode by mutableStateOf("mounted")
+
+    private fun choosePowerMode(mode: String) {
+        Store(this).powerMode = mode
+        powerMode = Store(this).powerMode
+        updateScreenPolicy()
+    }
+
+    private fun updateScreenPolicy() {
+        if (foreground && powerMode == "mounted") window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        foreground = true
+        vm.setForeground(true)
+        updateScreenPolicy()
+    }
+
+    override fun onPause() {
+        foreground = false
+        vm.setForeground(false)
+        updateScreenPolicy()
+        super.onPause()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enterImmersive()
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        powerMode = Store(this).powerMode
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = BG, surface = BG)) {
-                val vm: ConnectViewModel = viewModel()
                 val state by vm.state.collectAsState()
                 val scan = rememberLauncherForActivityResult(
                     ActivityResultContracts.StartActivityForResult()
@@ -74,12 +109,17 @@ class MainActivity : AppCompatActivity() {
                         onScan = { scan.launch(Intent(this, QrScannerActivity::class.java)) },
                         onManual = { vm.connectUrl(it) },
                         onRetry = { vm.retryUsb() },
+                        powerMode = powerMode,
+                        onPowerMode = { choosePowerMode(it) },
                     )
                     is UiState.Connected ->
                         ShellWebView(
                             s.url, s.fingerprint,
                             onBack = { vm.disconnect() },
                             onLost = { origin -> vm.onConnectionLost(origin) },
+                            foreground = foreground,
+                            powerMode = powerMode,
+                            onPowerMode = { mode -> runOnUiThread { choosePowerMode(mode) } },
                         )
                     is UiState.OfferWifi -> WifiHandoffDialog(
                         pcName = s.pc.name,
@@ -125,9 +165,28 @@ private fun WifiHandoffDialog(pcName: String, onAccept: () -> Unit, onDecline: (
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit, onLost: (String) -> Unit) {
+private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit, onLost: (String) -> Unit,
+                         foreground: Boolean, powerMode: String, onPowerMode: (String) -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
     var error by remember { mutableStateOf(false) }
+    var rendererGone by remember { mutableStateOf(false) }
+    var rendererGeneration by remember { mutableStateOf(0) }
+    val latestForeground by rememberUpdatedState(foreground)
+    val latestPowerMode by rememberUpdatedState(powerMode)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(web, foreground, powerMode) {
+        web?.let { applyPageLifecycle(it, foreground, powerMode) }
+    }
+    DisposableEffect(Unit) { onDispose { web?.let(::releaseWebView); web = null } }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME || event == Lifecycle.Event.ON_PAUSE) {
+                web?.let { applyPageLifecycle(it, event == Lifecycle.Event.ON_RESUME, latestPowerMode) }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     BackHandler {
         val w = web
         when {
@@ -137,7 +196,7 @@ private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit, o
         }
     }
     Box(Modifier.fillMaxSize()) {
-        AndroidView(
+        if (!rendererGone) key(url, fingerprint, rendererGeneration) { AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -149,23 +208,46 @@ private fun ShellWebView(url: String, fingerprint: String, onBack: () -> Unit, o
                     webChromeClient = WebChromeClient()
                     // Durable, origin-independent credentials so the page never has to
                     // re-scan a QR once paired (see DeckBridge / Store).
-                    addJavascriptInterface(DeckBridge(Store(ctx), onLost = onLost), "AndroidBridge")
+                    addJavascriptInterface(DeckBridge(Store(ctx), onLost = onLost, onPowerMode = onPowerMode), "AndroidBridge")
                     webViewClient = ShellClient(
                         fingerprint,
-                        onError = { error = true },
-                        onOk = { error = false },
+                        onError = { if (web === this) error = true },
+                        onOk = { if (web === this) { error = false; applyPageLifecycle(this, latestForeground, latestPowerMode) } },
+                        onRendererGone = { if (web === this) { rendererGone = true; error = true; web = null } },
                     )
                     loadUrl(url)
                 }
             },
-        )
+            onRelease = { released -> releaseWebView(released); if (web === released) web = null },
+        ) }
         if (error) {
             ErrorScreen(
-                onRetry = { error = false; web?.reload() },
+                onRetry = {
+                    error = false
+                    if (rendererGone) { rendererGeneration++; rendererGone = false }
+                    else web?.reload()
+                },
                 onBack = onBack,
             )
         }
     }
+}
+
+private fun applyPageLifecycle(view: WebView, foreground: Boolean, powerMode: String) {
+    if (foreground) view.onResume()
+    view.evaluateJavascript("window.DecksterLifecycle && window.DecksterLifecycle({foreground:$foreground,powerMode:'$powerMode'});", null)
+    if (!foreground) view.onPause()
+}
+
+private fun releaseWebView(view: WebView) {
+    if (view.tag == "deckster-released") return
+    view.tag = "deckster-released"
+    (view.parent as? android.view.ViewGroup)?.removeView(view)
+    view.removeJavascriptInterface("AndroidBridge")
+    view.stopLoading()
+    view.webChromeClient = null
+    view.webViewClient = WebViewClient()
+    view.destroy()
 }
 
 /** WebView policy: pinned-TLS acceptance + a native error screen (no browser page). */
@@ -173,6 +255,7 @@ private class ShellClient(
     private val fingerprint: String,
     private val onError: () -> Unit,
     private val onOk: () -> Unit,
+    private val onRendererGone: () -> Unit,
 ) : WebViewClient() {
     private var failed = false
 
@@ -199,5 +282,11 @@ private class ShellClient(
 
     override fun onPageFinished(view: WebView, url: String?) {
         if (!failed) onOk()                                        // a clean load clears the error
+    }
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+        releaseWebView(view)
+        onRendererGone()
+        return true
     }
 }

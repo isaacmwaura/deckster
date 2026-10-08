@@ -50,6 +50,8 @@ fun ConnectScreen(
     onScan: () -> Unit,
     onManual: (String) -> Unit,
     onRetry: () -> Unit,
+    powerMode: String,
+    onPowerMode: (String) -> Unit,
 ) {
     var manual by remember { mutableStateOf("") }
     Column(
@@ -62,6 +64,9 @@ fun ConnectScreen(
     ) {
         Text("Deckster", color = INK, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text("Connect to your PC", color = SUB, fontSize = 14.sp)
+        TextButton(onClick = { onPowerMode(if (powerMode == "mounted") "battery" else "mounted") }) {
+            Text(if (powerMode == "mounted") "Mounted · screen stays on" else "Battery · normal screen timeout", color = BLUE)
+        }
         Spacer(Modifier.height(22.dp))
 
         if (devices.isNotEmpty()) {

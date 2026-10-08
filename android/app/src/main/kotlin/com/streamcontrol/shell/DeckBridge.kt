@@ -18,6 +18,7 @@ import android.os.Build
 class DeckBridge(
     private val store: Store,
     private val onLost: (String) -> Unit = {},
+    private val onPowerMode: (String) -> Unit = {},
 ) {
 
     @JavascriptInterface
@@ -42,6 +43,16 @@ class DeckBridge(
 
     @JavascriptInterface
     fun setDeviceId(id: String) { store.seedDeviceId(id) }
+
+    @JavascriptInterface
+    fun getPowerMode(): String = store.powerMode
+
+    @JavascriptInterface
+    fun setPowerMode(mode: String) {
+        if (mode != "mounted" && mode != "battery") return
+        store.powerMode = mode
+        onPowerMode(mode)
+    }
 
     /** The page lost contact with the PC (WebSocket down past its retry budget). */
     @JavascriptInterface

@@ -96,7 +96,7 @@ under their thumb.</p>
   and streams the current state back so the phone always matches the PC.</p>
 </div>
 
-<div class="callout info"><div class="callout-title">Current source: v0.6.3 · September 30, 2026</div><p>This manual covers the redesigned desktop workspace and phone soundboard. The latest packaged GitHub release is v0.5.3 and has an older desktop interface. Build the current source for these features; see <a href="../CHANGELOG.md">the changelog</a>.</p></div>
+<div class="callout info"><div class="callout-title">Current source: v0.7.0 · documentation reviewed October 4, 2026</div><p>This manual covers the redesigned desktop workspace, phone soundboard and v0.7.0 ownership/lifecycle rebuild. Download matching v0.7.0 Windows EXE and Android APK packages from <a href="https://github.com/isaacmwaura/deckster/releases/tag/v0.7.0">Releases</a>; see <a href="../CHANGELOG.md">the changelog</a>.</p></div>
 <h1 id="what">What Deckster does</h1>
 <p>Everything you control lives on the phone as a touch surface. The headline capabilities:</p>
 <ul>
@@ -116,6 +116,7 @@ under their thumb.</p>
 </ul>
 
 <h1 id="how">How it works</h1>
+<p>For the complete implemented system, read the <a href="architecture.md">v0.7.0 architecture guide</a>: process owners, command protocol, audio paths, security, persistence and resource limits. This manual focuses on setup and everyday use. The phone controls the PC; microphone and soundboard audio stay on the PC.</p>
 <p>Deckster is three cooperating parts: the <b>phone</b> (a touch page, shown either by a small native
 Android app or by any browser), the <b>link</b> between phone and PC (a USB cable or Wi-Fi), and the
 <b>agent</b> on the PC (which does the real work against Windows audio). The phone never talks to Windows
@@ -207,11 +208,20 @@ each instruction into a real Windows action — set this app's volume, mute the 
 output device, skip the track. It also watches Windows and pushes changes back to the phone, so if you
 change the volume on the PC the phone's dial moves too.</p>
 
+<h3>What changed in the rebuild</h3>
+<p>Phone and desktop workspace commands now share bounded application queues, with separate audio, media, soundboard and Stop work. Windows volume/mute results include actual readback, so delayed state cannot undo a newer control. Reconnect obtains current state without replaying old effects or hotkeys. Listener changes preserve your requested TLS preference if a transition fails.</p>
+<p>Android now offers persistent <b>Mounted</b> and <b>Battery</b> modes. Mounted keeps the foreground screen awake; Battery allows normal screen timeout. Backgrounding suspends connection/rendering work, and native Refresh recreates a failed WebView renderer. Effects are decoded within explicit duration/memory limits; no microphone denoiser has been selected.</p>
 <h3>The link</h3>
 <p>Two ways to connect, covered next. The short version: <b>USB</b> is the most private (traffic never
 touches your network) and lowest-latency; <b>Wi-Fi</b> is wireless and works for any phone with a browser.</p>
 
-<h1 id="connect">Connecting your phone</h1>
+<h1 id="connect">Download, open, connect</h1>
+<ol><li><b>Windows:</b> open <a href="https://github.com/isaacmwaura/deckster/releases">Deckster Downloads</a>, download the EXE and double-click it. Python, app dependencies and USB tools are included. No terminal setup is needed.</li><li><b>Android:</b> download the APK from the same release and install it on your phone or tablet.</li><li><b>Connect:</b> open <b>Connect &amp; devices</b> on the PC. Use USB with USB debugging enabled, or choose Wi-Fi and scan the QR code.</li></ol>
+<div class="fig-wrap"><img src="img/desktop-connect-v0.6.5.png" alt="Deckster Connect and devices page with download steps, QR pairing, and USB or Wi-Fi options" style="width:100%;height:auto;border-radius:10px"></div><p class="fig-cap">The PC connection page, with demonstration data. Your own PC displays its pairing code and QR.</p>
+<p>The desktop shortcut always points to the latest opened packaged build. The connected phone or tablet reports its dimensions automatically, including after rotation; there is no screen-size entry field.</p>
+<h2>Soundboard setup: install VB-CABLE once</h2>
+<p>If VB-CABLE is missing, Deckster shows a persistent notice on Soundboard and Audio routing. You can still edit sounds and listen to local previews.</p><ol><li><a href="https://vb-audio.com/Cable/" target="_blank" rel="noopener noreferrer">Download VB-CABLE from VB-Audio</a> and extract the ZIP.</li><li>Run the installer matching your PC architecture as administrator, then restart Windows.</li><li>Open <b>Audio routing → Use recommended settings</b> to connect the microphone and matching cable ends. Compatibility checks run automatically.</li><li>Choose <b>Route all microphone audio through the virtual mixer</b>. Apps with a custom microphone setting also need the displayed cable microphone selected.</li></ol>
+<div class="callout info"><div class="callout-title">External website</div><p>VB-CABLE is made by VB-Audio and is installed separately. Deckster is independent of VB-Audio and does not control its website, downloads or security. External websites have their own terms and privacy policies. Check the address before downloading. This notice does not limit rights under applicable law.</p></div>
 <p>Pick the path that suits your phone. On Android the app supports both and can hand a live session from
 USB over to Wi-Fi if you unplug the cable; on an iPhone you use Wi-Fi in Safari.</p>
 
@@ -354,7 +364,7 @@ A native panel provides a fallback if Edge is unavailable.</p>
 <p><b>Page layout</b> arranges Mixer, Soundboard, Devices and Media around the home
 screen. All four pages can move. Occupied positions swap; a page must occupy the
 center before saving. The smaller preview leaves placement controls visible.</p>
-<p><b>Phone workspace</b> manages app order, hidden apps and the two Hide choices:
+<p><b>Phone workspace</b> manages app order and hidden apps. Hide controls sit directly beneath the phone preview, while long app lists scroll in their own panel. The two Hide choices are:
 hold and drag to the bottom target, or hold and tap Hide. A hidden app continues
 working in Windows. Use the preview to cycle pages and try navigation; on the
 phone, the translucent chevrons identify neighboring pages. Swipe upward to
@@ -378,18 +388,20 @@ can play together. Hold for 1.5 seconds to edit the clip and use <b>Save</b> to
 persist it. <b>Remove</b> clears only the assignment; tap an empty <b>+</b> to choose
 an unassigned sound. <b>Stop all</b> stops soundboard and audition playback.</p>
 <h3>Connect your voice and soundboard to a game or call</h3>
+<p>Discord profile changes are troubleshooting options, not a guaranteed fix. Mixed voice fidelity and intermittent effects remain under investigation. Compare the direct microphone and mixer with a real listener, including quiet speech, effects alone and overlap. A cable probe verifies an earlier boundary, not complete receipt by the call.</p>
+<div class="callout info"><div class="callout-title">Discord hears your voice but removes sounds?</div><p>In Discord → Voice &amp; Video, keep the cable’s <b>CABLE Output</b> selected as Input Device and choose <b>Input Profile: Studio</b>. With Custom, set <b>Noise Suppression: None</b>, turn Echo Cancellation and Automatic Gain Control off, and disable advanced voice activity. Krisp removes non-speech audio; a speaking indicator does not prove the sound is audible to listeners. Set Voice Activity sensitivity below your quietest clip, or hold Push to Talk throughout playback.</p><p>Open <b>Audio routing → Discord &amp; games → Check sound delivery to virtual microphone</b>. Deckster sends a short probe through its running mixer and looks for the same signal at the cable’s receiving end. No recording is saved. A pass confirms the cable path before Discord’s filters; use Discord’s Mic Test with an actual clip and confirm in a call. Stopped streams and returning devices reconnect automatically using the saved route.</p><p><a href="https://support.discord.com/hc/en-us/articles/360040843952-Krisp-FAQ">Discord Krisp guide</a> · <a href="https://support.focusrite.com/hc/en-gb/articles/37822488093202-How-to-set-up-a-Focusrite-interface-in-Discord">Studio profile setup</a></p></div>
 <p>Install a virtual audio driver such as VB-CABLE separately. In <b>Audio routing</b>,
 choose the physical mic, the virtual-cable playback endpoint (usually CABLE Input)
-and optional headphones/speakers for Me. Click <b>Connect audio</b>. Your physical
+and optional headphones/speakers for Me. Click <b>Start audio</b> (or <b>Apply device changes</b> after changing a device). This applies your choices and starts the audio streams. Phone pairing is handled on <b>Connect &amp; devices</b>. Your physical
 voice and sounds marked Others enter the cable together; its recording endpoint
 (usually CABLE Output) is the microphone you select in your game or call.</p>
-<div class="fig-wrap"><img src="img/desktop-routing-v0.6.3.png" alt="Physical mic and soundboard merge into the virtual cable, with a separate local listening branch" style="width:100%;height:auto;border-radius:10px"></div>
+<div class="fig-wrap"><img src="img/desktop-routing-v0.6.6.png" alt="Physical mic and soundboard merge into the virtual cable, with a separate local listening branch" style="width:100%;height:auto;border-radius:10px"></div>
 <p class="fig-cap">Others enters the game/call microphone; Me plays sounds locally.</p>
-<p><b>Test to others</b> sends a tone into the selected cable. <b>Test to me</b>
-checks local listening. Test inside the receiving game/call as well: Deckster
-cannot automatically choose its microphone or confirm what another app plays.
-Local monitoring plays clips only. Intermittent receiving-app delivery is still
-being investigated; automated checks alone do not establish end-to-end success.</p>
+<p>The <b>Virtual mixer</b> view measures microphone, soundboard, combined output
+and headphone signals. Speak or play a test tone to follow activity. A separate
+<b>Direct input bypass</b> shows the Windows default microphone path. These
+meters do not confirm what an individual receiving app hears.</p>
+<p><b>Use recommended settings</b> connects suitable devices in one click. <b>Route all microphone audio through the virtual mixer</b> sets the Windows default input to the receiving cable end. Apps with custom input settings still need this device selected in their own settings.</p><p>The compatibility checker runs automatically when devices or the route change. Its summary stays compact when devices are compatible and expands to show any problem. Deckster mixes at 48 kHz and converts supported device formats and imported sounds automatically. A different device default rate does not by itself mean incompatibility. <b>Check again</b> is available for a manual recheck.</p><p>Wires connect your microphone and soundboard to the mixer, then the mixer to the app input and your headphones. Moving lights reflect measured signal, with fast updates and quick release after speech or sounds stop. Dashed wires indicate a route that is off or disconnected. The direct microphone bypass remains visible as a separate path. Headphone playback contains Deckster sounds with Me enabled; it does not monitor your microphone.</p><p><b>Test app input · voice + sounds</b> sends a tone into the selected cable. <b>Test headphones</b> checks local listening. Confirm reception inside your game/call; these meters do not measure what another app receives.</p>
 <h3>Restore actions have separate scopes</h3>
 <p><b>Restore defaults</b> in Settings resets page placement, app order/visibility,
 Hide preference and pad assignments. It preserves the entire sound library,
@@ -414,7 +426,7 @@ way around and build it.</p>
 </table>
 
 <h3>What happens when you drag the dial</h3>
-<p>Following one action end-to-end is the quickest way to understand the whole system.</p>
+<p>The phone authenticates once on its WebSocket, then sends identified actions. The shared command facade admits a volume change; the dedicated Windows owner writes and reads back the actual value in one turn. Owner sequences prevent a delayed poll from undoing it.</p>
 
 <div class="landscape-section">
 <div class="fig-wrap">
@@ -436,12 +448,12 @@ way around and build it.</p>
   <rect x="290" y="70" width="190" height="80" rx="8" fill="#E8F4FB" stroke="#2E75B6" stroke-width="1.5"/>
   <text x="385" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">2 · Page sends</text>
   <text x="385" y="120" text-anchor="middle" font-size="11.5" fill="#595959">"set this app to</text>
-  <text x="385" y="135" text-anchor="middle" font-size="11.5" fill="#595959">62%" + token</text>
+  <text x="385" y="135" text-anchor="middle" font-size="11.5" fill="#595959">62%" + command ID</text>
 
   <rect x="550" y="70" width="190" height="80" rx="8" fill="#BDD7EE" stroke="#1B3A5C" stroke-width="1.5"/>
-  <text x="645" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">3 · Agent checks</text>
-  <text x="645" y="120" text-anchor="middle" font-size="11.5" fill="#595959">the token, then</text>
-  <text x="645" y="135" text-anchor="middle" font-size="11.5" fill="#595959">calls Windows</text>
+  <text x="645" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">3 · Agent admits</text>
+  <text x="645" y="120" text-anchor="middle" font-size="11.5" fill="#595959">the paired command,</text>
+  <text x="645" y="135" text-anchor="middle" font-size="11.5" fill="#595959">queues its owner</text>
 
   <rect x="810" y="70" width="190" height="80" rx="8" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="1.5"/>
   <text x="905" y="100" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B3A5C">4 · Windows sets</text>
@@ -449,8 +461,8 @@ way around and build it.</p>
   <text x="905" y="135" text-anchor="middle" font-size="11.5" fill="#595959">to 62%</text>
 
   <rect x="1000" y="185" width="150" height="70" rx="8" fill="#E2EFDA" stroke="#2f7d4f" stroke-width="1.5" transform="translate(-60,0)"/>
-  <text x="1015" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">5 · New state</text>
-  <text x="1015" y="231" text-anchor="middle" font-size="11" fill="#595959">streams back</text>
+  <text x="1015" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1B3A5C">5 · Readback</text>
+  <text x="1015" y="231" text-anchor="middle" font-size="11" fill="#595959">+ result return</text>
 
   <line x1="222" y1="110" x2="286" y2="110" stroke="#2E75B6" stroke-width="2" marker-end="url(#a4)"/>
   <line x1="482" y1="110" x2="546" y2="110" stroke="#2E75B6" stroke-width="2" marker-end="url(#a4)"/>
@@ -459,19 +471,19 @@ way around and build it.</p>
   <line x1="905" y1="150" x2="905" y2="220" stroke="#2f7d4f" stroke-width="2" marker-end="url(#a4b)"/>
   <line x1="880" y1="220" x2="125" y2="220" stroke="#2f7d4f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a4b)"/>
   <line x1="125" y1="220" x2="125" y2="152" stroke="#2f7d4f" stroke-width="2" marker-end="url(#a4b)"/>
-  <text x="500" y="212" text-anchor="middle" font-size="11.5" fill="#2f7d4f" font-style="italic">every connected phone updates to match — the PC is the single source of truth</text>
+  <text x="500" y="212" text-anchor="middle" font-size="11.5" fill="#2f7d4f" font-style="italic">owner observations return to connected screens — the PC owns current state</text>
 </svg>
 </div>
 </div>
-<p class="fig-cap">Figure 4 — One volume change, end to end. The blue path is the command going down; the green
-dashed path is the resulting state streaming back to <em>every</em> connected phone, which is why two phones
-(or the PC and a phone) never disagree.</p>
+<p class="fig-cap">Figure 4 — One volume change, end to end. The blue path carries the command;
+the green dashed path returns Windows observations to connected screens.
+A command result links readback to your action; reconnect obtains fresh state.</p>
 
 <h3>Repository layout</h3>
 <table>
   <tr><th>Folder</th><th>What's inside</th></tr>
   <tr><td><code>agent/</code></td><td>The Python PC agent: the web/WebSocket server, the audio engine, media, hotkey macros, pairing/tokens, USB and Wi-Fi transport, and the desktop control-panel window.</td></tr>
-  <tr><td><code>web/</code></td><td>The touch control surface: <code>index.html</code>, <code>app.js</code>, <code>style.css</code>, and the service worker that makes it an installable app.</td></tr>
+  <tr><td><code>web/</code></td><td>The shared phone renderer plus the desktop workspace and its same-origin preview. Phone files: <code>index.html</code>, <code>app.js</code>, <code>style.css</code>, and the service worker that makes it an installable app.</td></tr>
   <tr><td><code>android/</code></td><td>The native Android shell (Kotlin + Compose) that hosts the web page and adds USB/Wi-Fi discovery and pairing.</td></tr>
   <tr><td><code>build/</code></td><td>Packaging configuration for producing the standalone <code>Deckster.exe</code>.</td></tr>
 </table>
@@ -491,16 +503,11 @@ dashed path is the resulting state streaming back to <em>every</em> connected ph
 </div>
 
 <h3>Extending it</h3>
-<p>Because the phone only speaks to the agent over one live connection, adding a control is usually two
-small changes: teach the agent a new instruction (validate it, act on Windows, include the result in the
-state it streams out) and add the button to the touch page that sends it. The UI never touches Windows,
-so you can prototype against the built-in mock audio backend with no hardware in the loop.</p>
+<p>To add a control, validate and route its intent through Controller/ApplicationCommands, select an execution domain and native owner, publish copied observations/results, then add the frontend action. Keep blocking work off the server loop and preserve cancellation, Stop, persistence and resource limits. Use the mock Core Audio backend with isolated app data for control development; avoid invoking live soundboard actions during hardware-free checks.</p>
 
 <div class="callout info">
   <div class="callout-title">Where to start reading</div>
-  <p>Open the agent's web/WebSocket server to see the message types the phone and PC exchange, then the audio
-  engine to see how an instruction becomes a Windows call. The touch page's <code>app.js</code> shows the other
-  side of the same conversation.</p>
+  <p>Start with the <a href="architecture.md">architecture guide</a>, then <code>agent/commands.py</code>, <code>agent/controller.py</code>, <code>agent/audio/engine.py</code> and <code>agent/state.py</code>. <code>web/app.js</code> handles phone intent/reconciliation; <code>web/desktop.js</code> drives the guarded HTTP workspace.</p>
 </div>
 
 <h1 id="license">License</h1>

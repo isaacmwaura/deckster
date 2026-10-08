@@ -58,6 +58,8 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 .conn-dot.warn{background:var(--amber);box-shadow:0 0 7px var(--amber);animation:scpulse 1s ease-in-out infinite;}
 .conn-dot.err{background:var(--red);box-shadow:none;}
 .conn-text{font-size:11px;font-weight:700;color:var(--green-txt);}
+.power-mode{font-size:10px;color:var(--sub);border:1px solid var(--line2);border-radius:6px;padding:3px 6px;}
+body.suspended .app.resting,body.suspended .saver-drift{animation-play-state:paused;}
 .topbar-div{width:1px;height:14px;background:var(--line2);margin:0 2px;flex:none;}
 .dial-badge{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;background:#7c8cff;color:#0c0d10;flex:none;}
 .dial-badge.has-icon,.tile-badge.has-icon{background-size:contain;background-repeat:no-repeat;background-position:center;}
@@ -441,3 +443,6 @@ button{font-family:inherit;color:inherit;cursor:pointer;border:none;background:n
 @media(orientation:landscape){.tile-name{font-size:13px}.tile-pct{font-size:21px}.tile-badge{width:28px;height:28px;font-size:13px}}
 .media-handle{opacity:.65;background:#10121899;transition:opacity .15s}.media-handle:hover,.media-handle:focus-visible{opacity:1}.media-handle span{display:flex;align-items:center;gap:5px}.neighbor-chevron{width:10px;height:10px;display:inline-block;border-top:1.5px solid currentColor;border-left:1.5px solid currentColor;transform:rotate(45deg);margin-top:5px}.neighbor-chevron.down{transform:rotate(225deg);margin-top:-4px}
 .desktop-preview .sound-pad{cursor:grab;user-select:none}.grabbing,.grabbing *{cursor:grabbing!important}.desktop-lifted{opacity:.45;outline:2px solid #cdfa7c!important}
+
+/* Artwork stays inside existing pad geometry. */
+.sound-pad-emoji .sound-art{width:42px;height:42px;border-radius:9px;object-fit:cover;display:block;pointer-events:none}.soundboard-choice{display:flex;align-items:center;gap:7px}.sound-choice-icon{flex:none;font-size:22px}.sound-choice-icon .sound-art{width:36px;height:36px;border-radius:7px;object-fit:cover;display:block;pointer-events:none}.sound-choice-label{min-width:0;overflow-wrap:anywhere}.sound-choice-label small{display:block;color:var(--sub);font-size:9px;margin-top:3px}.sound-choice-search{flex:none;width:100%;height:34px;min-height:34px;margin:8px 0;padding:0 9px;color:var(--ink);background:var(--card2);border:1px solid var(--line3);border-radius:8px}.soundboard-choices{min-height:0}@media(max-height:400px){.sound-pad-emoji .sound-art{width:30px;height:30px}}

@@ -6,6 +6,12 @@
 (function () {
   "use strict";
   var desktopPreview = window.parent !== window && /[?&]preview=1/.test(location.search);
+  var nativeForeground = true, previewForeground = true, saverActive = false, drainingState = false;
+  var renderPending = false, suspendedState = {}, suspendedTargets = {}, suspendedToast = null;
+  var powerMode = "mounted", wakeLock = null, wakeLockPending = false;
+  function foregroundAllowed() { return nativeForeground && previewForeground && document.visibilityState === "visible"; }
+  function renderingAllowed() { return foregroundAllowed() && !saverActive && !drainingState; }
+  function deferRender() { if (renderingAllowed()) return false; renderPending = true; return true; }
 
   // ---------------------------------------------------------------- helpers
   var $ = function (id) { return document.getElementById(id); };
@@ -106,6 +112,7 @@
     this.target = { value: 0, muted: false, accent: "#4ddb7f", source: "", mode: "jog", interactive: true };
     this.val = 0; this.muted = false; this.dragging = false; this.lastAngle = 0;
     this.anchorVal = 0; this.anchorAxis = 0; this.dragDelta = 0;  // relative-drag state
+    this.gesture = null;
     this._lastTouch = 0;   // suppresses the synthesized mousedown that follows a touch
     this.svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.host.appendChild(this.svg);
@@ -123,10 +130,11 @@
   };
   Dial.prototype.linear = function () { return this.target.mode === "linear"; };
   Dial.prototype.readOnly = function () { return this.target.interactive === false; };
-  Dial.prototype.setOrient = function (o) { if (o !== this.orientation) { this.orientation = o; this.render(); } };
+  Dial.prototype.setOrient = function (o) { if (o !== this.orientation) { this.cancel(); this.orientation = o; this.render(); } };
   Dial.prototype.setTarget = function (t) {
     // Don't let a background reconnect/pong (setConnection -> setTarget) reset the
     // value out from under an in-progress drag; syncValue already guards this path.
+    if (this.gesture && (t.id !== this.gesture.target.id || t.interactive === false)) this.cancel();
     this.target = t;
     if (!this.dragging) { this.val = clamp(+t.value || 0, 0, 100); this.muted = !!t.muted; }
     this.render();
@@ -165,23 +173,49 @@
   };
   Dial.prototype.commit = function (nv) {
     var prev = this.val; nv = clamp(nv, 0, 100);
+    if (!isFinite(nv) || Math.abs(nv - prev) < .001) return;
     var pb = Math.round(prev / 10), nb = Math.round(nv / 10);
     if (pb !== nb) buzz(nb === 0 || nb === 10 ? HAPTIC.edge : HAPTIC.tick);  // nb is tenths: 0=0%,10=100%
-    this.val = nv; this.render();
-    if (this.cb.onChange) this.cb.onChange(nv);
+    this.val = nv; this.requestRender();
+    if (this.cb.onChange) this.cb.onChange(nv, this.gesture ? this.gesture.target : this.target);
   };
   Dial.prototype.nudge = function (d) {
     if (this.readOnly()) return; var prev = this.val, v = clamp(prev + d, 0, 100);
     if (v !== prev) buzz(v === 0 || v === 100 ? HAPTIC.edge : HAPTIC.step);
-    this.val = v; this.render(); if (this.cb.onChange) this.cb.onChange(v);
+    if (v === prev) return;
+    this.val = v; this.render(); if (this.cb.onChange) this.cb.onChange(v, this.target);
+    if (this.cb.onCommit) this.cb.onCommit(v, this.target);
   };
+  Dial.prototype.requestRender = function () {
+    if (this._renderFrame) return;
+    var self = this;
+    this._renderFrame = requestAnimationFrame(function () { self._renderFrame = null; self.render(); });
+  };
+  Dial.prototype.finish = function (commit) {
+    var gesture = this.gesture;
+    if (!gesture) return;
+    this.gesture = null; this.dragging = false;
+    gesture.cleanup();
+    if (this._renderFrame) { cancelAnimationFrame(this._renderFrame); this._renderFrame = null; }
+    this.render();
+    // A tap or canceled gesture must never issue a new volume command. Values
+    // already sent while dragging remain valid; nothing survives to a later touch.
+    if (commit && gesture.changed && this.cb.onCommit) this.cb.onCommit(this.val, gesture.target);
+    else if (!commit && this.cb.onCancel) this.cb.onCancel(gesture.target);
+  };
+  Dial.prototype.cancel = function () { this.finish(false); };
   Dial.prototype._bind = function () {
     var self = this;
     var down = function (e) {
+      var pointer = e.type === "pointerdown";
       // A tap fires touchstart AND a synthesized mousedown; ignore the latter so
       // the mute button (and +/- nudges) toggle exactly once, not twice.
       if (e.type === "mousedown") { if (Date.now() - self._lastTouch < 700) return; }
       else self._lastTouch = Date.now();
+      if ((e.type === "mousedown" || pointer) && e.button !== 0) return;
+      if (pointer && e.isPrimary === false) return;
+      if (e.touches && e.touches.length !== 1) { self.cancel(); return; }
+      if (self.gesture) return;
       var act = e.target.closest ? e.target.closest("[data-act]") : null;
       if (act) {
         var a = act.getAttribute("data-act");
@@ -202,18 +236,57 @@
       self.anchorVal = self.val;
       self.anchorAxis = self.valFromPointer(t.clientX, t.clientY);
       self.dragDelta = 0;
+      // Measure once. Re-reading SVG layout on every move forces layout and can
+      // change the drag scale when the phone resizes or enters fullscreen.
+      var g = self.geom(), c = self.cfg(), p0 = self.pos(0, self.R_FILL), p100 = self.pos(100, self.R_FILL);
+      var axis = self.linear() || self.orientation === "left" ? "y" : "x";
+      var span = self.linear() ? (c.linTop - c.linBot) * g.sy :
+        axis === "y" ? (p100.y - p0.y) * g.sy : (p100.x - p0.x) * g.sx;
+      var touch = e.type === "touchstart", id = pointer ? e.pointerId : touch ? t.identifier : null;
+      var gesture = self.gesture = { target: self.target, touch: touch, id: id, axis: axis,
+        start: axis === "x" ? t.clientX : t.clientY, scale: 100 / (span || 1), changed: false };
       self.render();
-      var move = function (ev) { if (ev.cancelable) ev.preventDefault(); var p = (ev.touches && ev.touches[0]) || ev; self._move(p.clientX, p.clientY); };
-      var up = function () {
-        document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up);
-        document.removeEventListener("touchmove", move); document.removeEventListener("touchend", up);
-        self.dragging = false; self.render(); if (self.cb.onCommit) self.cb.onCommit(self.val);
+      function ownTouch(list) {
+        for (var i = 0; list && i < list.length; i++) if (list[i].identifier === id) return list[i];
+        return null;
+      }
+      var move = function (ev) {
+        if (self.gesture !== gesture) return;
+        if (pointer && ev.pointerId !== id) return;
+        if (touch && (!ev.touches || ev.touches.length !== 1)) { self.cancel(); return; }
+        if (!touch && ev.buttons != null && !(ev.buttons & 1)) { self.cancel(); return; }
+        var p = touch ? ownTouch(ev.touches) : ev;
+        if (!p) return;
+        if (ev.cancelable) ev.preventDefault();
+        self._move(p.clientX, p.clientY);
       };
-      document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
-      document.addEventListener("touchmove", move, { passive: false }); document.addEventListener("touchend", up);
+      var up = function (ev) { if (self.gesture === gesture && (!pointer || ev.pointerId === id) && (!touch || ownTouch(ev.changedTouches))) self.finish(true); };
+      var cancel = function (ev) { if (self.gesture === gesture && (!pointer || !ev || ev.pointerId == null || ev.pointerId === id)) self.cancel(); };
+      var hidden = function () { if (document.visibilityState !== "visible") cancel(); };
+      var moveEvent = pointer ? "pointermove" : touch ? "touchmove" : "mousemove", upEvent = pointer ? "pointerup" : touch ? "touchend" : "mouseup";
+      var cancelEvent = pointer ? "pointercancel" : "touchcancel", touchTarget = touch ? e.target : null;
+      gesture.cleanup = function () {
+        document.removeEventListener(moveEvent, move); document.removeEventListener(upEvent, up);
+        document.removeEventListener(cancelEvent, cancel); document.removeEventListener("visibilitychange", hidden);
+        self.svg.removeEventListener("lostpointercapture", cancel);
+        if (touchTarget) { touchTarget.removeEventListener(moveEvent, move); touchTarget.removeEventListener(upEvent, up); touchTarget.removeEventListener(cancelEvent, cancel); }
+        window.removeEventListener("blur", cancel); window.removeEventListener("pagehide", cancel); window.removeEventListener("resize", cancel);
+        if (pointer && self.svg.hasPointerCapture && self.svg.hasPointerCapture(id)) self.svg.releasePointerCapture(id);
+      };
+      document.addEventListener(moveEvent, move, { passive: false }); document.addEventListener(upEvent, up);
+      document.addEventListener(cancelEvent, cancel); document.addEventListener("visibilitychange", hidden);
+      // Capture on the stable SVG, not its disposable paths/text. Otherwise a
+      // native touch end can go to a detached path after the dial redraws.
+      if (pointer) {
+        self.svg.addEventListener("lostpointercapture", cancel);
+        try { self.svg.setPointerCapture(id); } catch (e2) { /* synthetic pointer or older WebView */ }
+      } else if (touchTarget) {
+        touchTarget.addEventListener(moveEvent, move, { passive: false }); touchTarget.addEventListener(upEvent, up); touchTarget.addEventListener(cancelEvent, cancel);
+      }
+      window.addEventListener("blur", cancel); window.addEventListener("pagehide", cancel); window.addEventListener("resize", cancel);
     };
-    this.svg.addEventListener("mousedown", down);
-    this.svg.addEventListener("touchstart", down, { passive: false });
+    if (window.PointerEvent) this.svg.addEventListener("pointerdown", down);
+    else { this.svg.addEventListener("mousedown", down); this.svg.addEventListener("touchstart", down, { passive: false }); }
   };
   // Relative gain drag: the value changes by however far the finger has moved from
   // the touch anchor, at the same 1:1 scale a slider would use — but starting from
@@ -222,12 +295,18 @@
   // and the swipe-speed sensitivity of the older velocity/chord model. dragDelta (the
   // net signed change this gesture) drives the on-dial gain arrow (see render()).
   Dial.prototype._move = function (x, y) {
-    var cur = this.valFromPointer(x, y);
-    var nv = clamp(this.anchorVal + (cur - this.anchorAxis), 0, 100);
+    if (!this.gesture || !isFinite(x) || !isFinite(y)) return;
+    var pointer = this.gesture.axis === "x" ? x : y;
+    var nv = clamp(this.anchorVal + (pointer - this.gesture.start) * this.gesture.scale, 0, 100);
     this.dragDelta = nv - this.anchorVal;
+    if (Math.abs(nv - this.val) >= .001) this.gesture.changed = true;
     this.commit(nv);
   };
   Dial.prototype.render = function () {
+    var signature = [this.orientation, this.target.accent, this.target.source, this.target.mode,
+      this.target.state, this.readOnly(), this.muted, this.dragging, Math.round(this.val * 10), Math.round(this.dragDelta)].join("|");
+    if (this._renderSignature === signature) return;
+    this._renderSignature = signature;
     var c = this.cfg(), lin = this.linear(), muted = this.muted, dragging = this.dragging;
     var disc = this.target.state === "disconnected";
     var v = clamp(this.val, 0, 100), accent = this.target.accent || "#4ddb7f";
@@ -331,7 +410,11 @@
     paired: false,                           // false until the phone is paired (gates media)
     selectedId: null, dialMode: "app", page: 0,
   };
-  var ws = null, reconnectDelay = 500, pingTimer = null, pingSentAt = 0;
+  var ws = null, reconnectDelay = 500, reconnectTimer = null, pingTimer = null, pingSentAt = 0;
+  var serverEpoch = null, causalProtocol = false, clientSeq = 0;
+  var commandPrefix = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  var pendingCommands = {}, ownerObservations = {}, muteIntents = {};
+  var snapshotReady = false;
   var _lostNotified = false;   // fired the native "connection lost" hook once per outage
   // QR pairing: the scanned URL carries ?pair=CODE, so we auto-pair on connect
   // instead of making the user type it. Falls back to the keypad if it fails.
@@ -384,32 +467,124 @@
     if (b && b.saveToken) { try { b.saveToken(t); } catch (e) {} }
   }
   function send(o) {
-    if (desktopPreview) { window.parent.postMessage({ t: "preview-command", command: o }, location.origin); return; }
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(o));
+    var command = !/^(hello|pair|subscribe|viewport|ping)$/.test(o.t);
+    if (command && (!renderingAllowed() || model.connection !== "connected" || (!desktopPreview && !snapshotReady))) { rejectLocalIntent(o); return false; }
+    if (!desktopPreview && (!ws || ws.readyState !== 1)) { if (command) rejectLocalIntent(o); return false; }
+    var identified = command && causalProtocol && (!desktopPreview || ["set_volume", "set_mute", "set_default_output", "set_default_input", "media_control", "app_input_mute", "set_app_input_binding", "clear_app_input_binding"].indexOf(o.t) >= 0);
+    if (identified) {
+      if (Object.keys(pendingCommands).length >= 128) { rejectLocalIntent(o); showToast("PC is busy", "Wait for the current controls to finish."); return false; }
+      o.commandId = commandPrefix + ":" + (++clientSeq); o.clientSeq = clientSeq;
+      var id = targetId(o.target), property = o.t === "set_volume" ? "level" : o.t === "set_mute" ? "muted" : null;
+      pendingCommands[o.commandId] = { targetId: id, property: property, clientSeq: clientSeq };
+      if (id && property === "level" && volumeIntents[id]) volumeIntents[id].commandId = o.commandId;
+      if (id && property === "level" && volumeLastSent && volumeLastSent.id === id) volumeLastSent.commandId = o.commandId;
+      if (id && property === "muted") muteIntents[id] = { muted: o.muted, commandId: o.commandId };
+    }
+    if (desktopPreview) window.parent.postMessage({ t: "preview-command", command: o }, location.origin);
+    else ws.send(JSON.stringify(o));
+    return true;
+  }
+  function targetId(target) {
+    if (!target) return null;
+    return target.kind === "speaker" ? "sys" : target.kind === "mic" ? "mic" : target.kind === "session" ? "app-" + target.id : null;
+  }
+  function rejectLocalIntent(command) {
+    var id = targetId(command.target);
+    if (!id || !causalProtocol) return;
+    if (command.t === "set_volume") delete volumeIntents[id];
+    if (command.t === "set_mute") delete muteIntents[id];
+    var authoritative = ownerObservations[id];
+    if (authoritative) applyState({ target: command.target, level: authoritative.level, muted: authoritative.muted, ownerSeq: authoritative.ownerSeq });
+  }
+  function negotiate(m) {
+    var supported = (m.capabilities || []).indexOf("command-results") >= 0 && (m.capabilities || []).indexOf("owner-sequence") >= 0;
+    causalProtocol = supported && !!m.serverEpoch;
+    if (m.serverEpoch && m.serverEpoch !== serverEpoch) {
+      serverEpoch = m.serverEpoch; ownerObservations = {}; pendingCommands = {}; volumeIntents = {}; muteIntents = {};
+      model.presentation.revision = 0;
+    }
+  }
+  function observe(id, value) {
+    if (!causalProtocol || typeof value.ownerSeq !== "number") return value;
+    var previous = ownerObservations[id];
+    if (previous && previous.ownerSeq >= value.ownerSeq) return previous;
+    ownerObservations[id] = { ownerSeq: value.ownerSeq, level: value.level, muted: value.muted };
+    return ownerObservations[id];
+  }
+  function reconcileMute(id, remote) { return causalProtocol && muteIntents[id] ? muteIntents[id].muted : remote; }
+  function receiveCommandResult(m) {
+    if (!causalProtocol || m.serverEpoch !== serverEpoch) return;
+    var pending = pendingCommands[m.commandId];
+    if (!pending || pending.clientSeq !== m.clientSeq || m.status === "accepted") return;
+    if (["applied", "superseded", "failed", "outcome_unknown"].indexOf(m.status) < 0) return;
+    delete pendingCommands[m.commandId];
+    if (volumeLastSent && volumeLastSent.commandId === m.commandId) volumeLastSent = null;
+    var id = pending.targetId;
+    if (id && m.observation && typeof m.ownerSeq === "number") observe(id, { ownerSeq: m.ownerSeq, level: m.observation.level, muted: m.observation.muted });
+    if (id && volumeIntents[id] && volumeIntents[id].commandId === m.commandId) delete volumeIntents[id];
+    if (id && muteIntents[id] && muteIntents[id].commandId === m.commandId) delete muteIntents[id];
+    var authoritative = id && ownerObservations[id];
+    if (authoritative) applyState({ target: m.target || (id === "sys" ? {kind:"speaker"} : id === "mic" ? {kind:"mic"} : {kind:"session", id:id.slice(4)}), level: authoritative.level, muted: authoritative.muted, ownerSeq: authoritative.ownerSeq });
+    if (m.status === "failed" || m.status === "outcome_unknown") {
+      var errorMessage = typeof m.error === "string" ? m.error : m.error && m.error.msg;
+      showToast(m.status === "outcome_unknown" ? "Result unknown" : "Command failed", errorMessage || "Refresh the current PC state before trying again.");
+      if (foregroundAllowed()) send({ t: "subscribe" });
+    }
   }
   function wsUrl() { return (location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + "/ws"; }
+  var lastViewport = "", viewportTimer;
+  function reportViewport() {
+    if (desktopPreview || !model.paired || !ws || ws.readyState !== 1) return;
+    var width = Math.round(window.innerWidth), height = Math.round(window.innerHeight);
+    var key = width + "x" + height;
+    if (key === lastViewport) return;
+    lastViewport = key;
+    send({ t: "viewport", width: width, height: height, name: deviceName() });
+  }
+  window.addEventListener("resize", function () {
+    clearTimeout(viewportTimer); viewportTimer = setTimeout(reportViewport, 180);
+  });
 
   function connect() {
+    if (!foregroundAllowed()) return;
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     setConnection("connecting");
-    ws = new WebSocket(wsUrl());
-    ws.onopen = function () {
+    var socket = ws = new WebSocket(wsUrl());
+    socket.onopen = function () {
+      if (socket !== ws) return;
       reconnectDelay = 500;
-      send({ t: "hello", token: getToken(), deviceName: nativeBridge() ? deviceName() : "" });
+      snapshotReady = false;
+      lastViewport = "";
+      send({ t: "hello", token: getToken(), deviceName: nativeBridge() ? deviceName() : "", capabilities: ["command-results", "owner-sequence"] });
       pingTimer = setInterval(function () { pingSentAt = Date.now(); send({ t: "ping" }); }, 5000);
     };
-    ws.onmessage = function (ev) { var m; try { m = JSON.parse(ev.data); } catch (e) { return; } handle(m); };
-    ws.onclose = function () {
+    socket.onmessage = function (ev) { if (socket !== ws) return; var m; try { m = JSON.parse(ev.data); } catch (e) { return; } handle(m); };
+    socket.onclose = function () {
+      if (socket !== ws) return;
       if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+      snapshotReady = false; pendingCommands = {}; volumeIntents = {}; muteIntents = {};
       model.retry++; setConnection(model.retry > 3 ? "disconnected" : "reconnecting");
-      setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 8000);
+      if (foregroundAllowed()) { reconnectTimer = setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 8000); }
     };
-    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    socket.onerror = function () { if (socket === ws) { try { socket.close(); } catch (e) {} } };
   }
-  function ensureConnected() { if (desktopPreview) return; if (ws && ws.readyState === 1) send({ t: "subscribe" }); else if (!ws || ws.readyState === 3) { reconnectDelay = 500; connect(); } }
+  function ensureConnected() { if (desktopPreview || !foregroundAllowed()) return; if (ws && ws.readyState === 1) send({ t: "subscribe" }); else if (!ws || ws.readyState === 3) { reconnectDelay = 500; connect(); } }
 
   function handle(m) {
+    if (!renderingAllowed() && !drainingState && ["snapshot", "state", "meters", "media", "soundboard", "presentation"].indexOf(m.t) >= 0) {
+      if (m.t === "state") {
+        var targetKey = targetId(m.target) || "unknown", old = suspendedTargets[targetKey];
+        if (!old || !causalProtocol || m.ownerSeq >= old.ownerSeq) suspendedTargets[targetKey] = m;
+      } else {
+        if (m.t === "snapshot") { suspendedState = {}; if (!causalProtocol) suspendedTargets = {}; }
+        suspendedState[m.t] = m;
+      }
+      renderPending = true; return;
+    }
+    if (causalProtocol && m.serverEpoch && m.serverEpoch !== serverEpoch && m.t !== "snapshot") return;
     switch (m.t) {
-      case "pong": if (pingSentAt) model.latency = Date.now() - pingSentAt; setConnection("connected"); return;
+      case "pong": if (pingSentAt) model.latency = Date.now() - pingSentAt; if (snapshotReady) setConnection("connected"); return;
       case "need_pair":
         model.paired = false; updateChrome();
         // Auto-pair from the scanned QR code; otherwise show the keypad.
@@ -418,8 +593,10 @@
         return;
       case "pair_ok": setToken(m.token); stripPairParam(); stopScan(); showPair(false); send({ t: "subscribe" }); return;
       case "pair_fail": urlPairCode = null; stripPairParam(); pairError(m.reason); return;
-      case "snapshot": model.paired = true; updateChrome(); showPair(false); model.retry = 0; setConnection("connected"); ingestSnapshot(m); renderAll(); return;
+      case "snapshot": negotiate(m); snapshotReady = true; model.paired = true; updateChrome(); showPair(false); model.retry = 0; setConnection("connected"); ingestSnapshot(m); renderAll(); reportViewport(); return;
       case "state": applyState(m); return;
+      case "meters": model.meters = m.meters || model.meters; return;
+      case "command_result": receiveCommandResult(m); return;
       case "media": model.media = m.media || []; renderMedia(); return;
       case "soundboard": model.soundboard = m.soundboard || model.soundboard; confirmClipSave(); renderSoundboard(); return;
       case "presentation": acceptPresentation(m.presentation); return;
@@ -432,19 +609,27 @@
   // ---- snapshot -> model ----
   function ingestSnapshot(m) {
     var sessions = m.sessions || [];
+    if (causalProtocol) {
+      var retainedTargets = { sys: true, mic: true };
+      sessions.forEach(function (s) { retainedTargets["app-" + s.id] = true; });
+      Object.keys(pendingCommands).forEach(function (id) { var target = pendingCommands[id].targetId; if (target) retainedTargets[target] = true; });
+      Object.keys(ownerObservations).forEach(function (id) { if (!retainedTargets[id]) delete ownerObservations[id]; });
+    }
     model.apps = sessions.map(function (s) {
+      var observed = observe("app-" + s.id, s);
       var ac = accentFor(s.id, s.appLabel || s.label || s.id);
       return { id: s.id, name: prettyName(s.appLabel || s.label || s.id), badge: ac.b, accent: ac.a,
         iconKey: s.iconKey || null,
-        level: Math.round((s.level != null ? s.level : 0) * 100), muted: !!s.muted, active: s.active !== false };
+        level: Math.round(reconcileVolume("app-" + s.id, observed.level != null ? observed.level : 0) * 100), muted: !!reconcileMute("app-" + s.id, observed.muted), active: s.active !== false };
     });
     if (m.presentation) acceptPresentation(m.presentation);
     applySavedOrder();
     var d = m.devices || {};
-    model.system.spkLevel = (d.speakerMaster || {}).level != null ? d.speakerMaster.level : model.system.spkLevel;
-    model.system.spkMuted = !!(d.speakerMaster || {}).muted;
-    model.system.micLevel = (d.micMaster || {}).level != null ? d.micMaster.level : model.system.micLevel;
-    model.system.micMuted = !!(d.micMaster || {}).muted;
+    var speaker = observe("sys", d.speakerMaster || {}), mic = observe("mic", d.micMaster || {});
+    model.system.spkLevel = speaker.level != null ? reconcileVolume("sys", speaker.level) : model.system.spkLevel;
+    model.system.spkMuted = !!reconcileMute("sys", speaker.muted);
+    model.system.micLevel = mic.level != null ? reconcileVolume("mic", mic.level) : model.system.micLevel;
+    model.system.micMuted = !!reconcileMute("mic", mic.muted);
     model.outputs = (d.outputs || []).map(devMap);
     model.inputs = (d.inputs || []).map(devMap);
     if (d.meters) { model.meters.output = +d.meters.output || 0; model.meters.input = +d.meters.input || 0; }
@@ -463,10 +648,11 @@
 
   function applyState(m) {
     var tg = m.target || {};
-    if (tg.kind === "session") { var a = findApp(tg.id); if (a) { if (m.level != null) a.level = Math.round(m.level * 100); if (m.muted != null) a.muted = m.muted; } }
-    else if (tg.kind === "speaker") { if (m.level != null) model.system.spkLevel = m.level; if (m.muted != null) model.system.spkMuted = m.muted; }
-    else if (tg.kind === "mic") { if (m.level != null) model.system.micLevel = m.level; if (m.muted != null) model.system.micMuted = m.muted; }
-    renderAll(); syncDialFromModel();
+    var observed = observe(targetId(tg), m);
+    if (tg.kind === "session") { var a = findApp(tg.id); if (a) { if (observed.level != null) a.level = Math.round(reconcileVolume("app-" + tg.id, observed.level) * 100); if (observed.muted != null) a.muted = reconcileMute("app-" + tg.id, observed.muted); } }
+    else if (tg.kind === "speaker") { if (observed.level != null) model.system.spkLevel = reconcileVolume("sys", observed.level); if (observed.muted != null) model.system.spkMuted = reconcileMute("sys", observed.muted); }
+    else if (tg.kind === "mic") { if (observed.level != null) model.system.micLevel = reconcileVolume("mic", observed.level); if (observed.muted != null) model.system.micMuted = reconcileMute("mic", observed.muted); }
+    renderTopbar(); renderSystem(); renderApps(); syncDialFromModel();
   }
   function findApp(id) { for (var i = 0; i < model.apps.length; i++) if (model.apps[i].id === id) return model.apps[i]; return null; }
 
@@ -480,28 +666,68 @@
   }
   var _lastTargetId = null;
   function syncDialFromModel() {
+    if (deferRender()) return;
     var t = dialTarget();
-    if (t.id !== _lastTargetId) { _lastTargetId = t.id; dial.setTarget({ value: t.value, muted: t.muted, accent: t.accent, source: t.source, mode: t.mode, interactive: model.connection !== "disconnected" }); }
+    if (t.id !== _lastTargetId) { _lastTargetId = t.id; dial.setTarget(targetForDial()); }
     else dial.syncValue(t.value, t.muted);
   }
 
   // ---- sending from the dial ----
-  var sendThrottle = 0;
-  function dialOnChange(v) {
-    var t = dialTarget(); // optimistic local update
-    if (model.dialMode === "system") model.system.spkLevel = v / 100;
-    else if (model.dialMode === "mic") model.system.micLevel = v / 100;
-    else { var a = findApp(model.selectedId); if (a) a.level = Math.round(v); }
-    renderTopbar(); renderSystem(); renderApps();
-    var now = Date.now(); if (now - sendThrottle < 55) return; sendThrottle = now;
-    sendVolume(t, v);
+  var volumeIntents = {}, volumePending = null, volumeTimer = null, volumeSentAt = 0, volumeLastSent = null, mixRenderFrame = null;
+  function reconcileVolume(id, remote) {
+    var intent = volumeIntents[id];
+    if (!intent) return remote;
+    if (causalProtocol) return intent.level;
+    if (Date.now() >= intent.until) { delete volumeIntents[id]; return remote; }
+    // Older command echoes and snapshots must not rewind the latest local move.
+    // Keep a short guard even after acknowledgement: a snapshot may have been
+    // captured before the command. Afterwards, external PC changes win again.
+    return intent.level;
   }
-  function dialOnCommit(v) { sendVolume(dialTarget(), v); }        // ensure final value lands
+  function renderMixSoon() {
+    if (deferRender()) return;
+    if (mixRenderFrame) return;
+    mixRenderFrame = requestAnimationFrame(function () { mixRenderFrame = null; renderSystem(); renderApps(); });
+  }
+  function clearVolumePending() {
+    if (volumeTimer) clearTimeout(volumeTimer);
+    volumeTimer = null; volumePending = null;
+  }
+  function flushVolume() {
+    var pending = volumePending; clearVolumePending();
+    if (!pending || model.connection !== "connected" || !renderingAllowed()) return;
+    if (volumeLastSent && volumeLastSent.id === pending.target.id && volumeLastSent.value === pending.value && Date.now() - volumeSentAt < 55) return;
+    volumeLastSent = { id: pending.target.id, value: pending.value };
+    volumeSentAt = Date.now(); sendVolume(pending.target, pending.value);
+  }
+  function dialOnChange(v, t) {
+    t = t || dialTarget();
+    if (t.id === "sys") model.system.spkLevel = v / 100;
+    else if (t.id === "mic") model.system.micLevel = v / 100;
+    else { var a = findApp(t.id.slice(4)); if (a) a.level = Math.round(v); }
+    volumeIntents[t.id] = { level: v / 100, until: Date.now() + 1500 };
+    renderMixSoon();
+    volumePending = { target: t, value: v };
+    var wait = 55 - (Date.now() - volumeSentAt);
+    if (wait <= 0) flushVolume();
+    else if (!volumeTimer) volumeTimer = setTimeout(flushVolume, wait);
+  }
+  function dialOnCommit(v, t) {
+    t = t || dialTarget();
+    var existing = volumeIntents[t.id];
+    volumeIntents[t.id] = { level: v / 100, until: Date.now() + 1500,
+      commandId: existing && existing.level === v / 100 ? existing.commandId : null };
+    volumePending = { target: t, value: v }; flushVolume();
+  }
+  function dialOnCancel(t) {
+    if (volumePending && volumePending.target.id === t.id) clearVolumePending();
+    delete volumeIntents[t.id];
+  }
   function sendVolume(t, v) {
     var lvl = v / 100;
     if (t.id === "sys") send({ t: "set_volume", target: { kind: "speaker" }, level: lvl });
     else if (t.id === "mic") send({ t: "set_volume", target: { kind: "mic" }, level: lvl });
-    else if (model.selectedId) send({ t: "set_volume", target: { kind: "session", id: model.selectedId }, level: lvl });
+    else if (t.id.indexOf("app-") === 0) send({ t: "set_volume", target: { kind: "session", id: t.id.slice(4) }, level: lvl });
   }
   function dialToggleMute() {
     var t = dialTarget();
@@ -510,18 +736,22 @@
     else { var a = findApp(model.selectedId); if (a) { a.muted = !a.muted; send({ t: "set_mute", target: { kind: "session", id: a.id }, muted: a.muted }); } }
     buzz(HAPTIC.mute); renderAll(); dial.setTarget(targetForDial());
   }
-  function targetForDial() { var t = dialTarget(); return { value: t.value, muted: t.muted, accent: t.accent, source: t.source, mode: t.mode, interactive: model.connection !== "disconnected" }; }
+  function targetForDial() { var t = dialTarget(); return { id: t.id, value: t.value, muted: t.muted, accent: t.accent, source: t.source, mode: t.mode, state: model.connection, interactive: model.connection === "connected" }; }
 
   // ================================================================ RENDER
   var dial;
-  function renderAll() { renderTopbar(); renderSystem(); renderApps(); renderDevices(); renderMedia(); renderSoundboard(); syncDialFromModel(); }
+  function renderAll() { if (deferRender()) return; renderPending = false; renderTopbar(); renderSystem(); renderApps(); renderDevices(); renderMedia(); renderSoundboard(); syncDialFromModel(); }
 
   function renderTopbar() {
+    if (deferRender()) return;
     // The current mix target's identity now lives above the dial. The icon is a
     // real <img> (not a CSS background) so it can't inherit the background-shorthand
     // reset that made the old reused badge render a clipped corner. A letter span
     // is the fallback for sources without an exe icon (system sounds, speaker, mic).
     var t = dialTarget();
+    var signature = [t.id, t.iconKey, t.accent, t.kind, t.source].join("|");
+    if (renderTopbar.signature === signature) return;
+    renderTopbar.signature = signature;
     var img = $("dial-app-icon"), badge = $("dial-app-badge"), name = $("dial-source");
     if (img && badge) {   // guard: never let a partial/stale DOM throw and break renderAll
       // Exactly ONE icon for the current target: the real app icon, or a generic
@@ -546,7 +776,13 @@
   }
 
   function setConnection(state) {
+    if (state !== "connected") { if (dial) dial.cancel(); clearVolumePending(); volumeIntents = {}; volumeLastSent = null; }
+    var changed = model.connection !== state;
     model.connection = state;
+    if (deferRender()) return;
+    var signature = [state, model.latency, model.retry].join("|");
+    if (setConnection.signature === signature) return;
+    setConnection.signature = signature;
     if (pendingClipSave && (state === "reconnecting" || state === "disconnected")) clipSaveError("Connection lost. Try Save again.");
     var dot = $("conn-dot"), text = $("conn-text"), banner = $("banner");
     dot.className = "conn-dot" + (state === "reconnecting" ? " warn" : state === "disconnected" ? " err" : "");
@@ -554,12 +790,16 @@
     else if (state === "connecting") { text.textContent = "connecting…"; text.style.color = "var(--sub)"; banner.className = "banner hidden"; }
     else if (state === "reconnecting") { text.textContent = "Reconnecting…"; text.style.color = "#ffcf88"; banner.className = "banner reconnecting"; banner.innerHTML = '<span class="b-dot"></span><div><div class="b-title">Reconnecting…</div><div class="b-sub">Lost the PC · controls paused</div></div><span class="b-right">' + model.retry + " / ∞</span>"; }
     else { text.textContent = "Disconnected"; text.style.color = "var(--red-tint)"; banner.className = "banner disconnected"; banner.innerHTML = '<span class="b-dot"></span><div><div class="b-title">Disconnected</div><div class="b-sub">Can’t reach the PC · is the desktop app running?</div></div>'; notifyNativeLost(); }
-    if (dial) dial.setTarget(targetForDial());
+    if (dial && changed) dial.setTarget(targetForDial());
     updateMediaConn();
   }
 
   function renderSystem() {
+    if (deferRender()) return;
     var s = model.system;
+    var signature = [s.micMuted, s.spkMuted, Math.round(s.spkLevel * 100)].join("|");
+    if (renderSystem.signature === signature) return;
+    renderSystem.signature = signature;
     var micBtn = $("btn-mic"), spkBtn = $("btn-spk");
     micBtn.className = "sys-btn " + (s.micMuted ? "muted" : "on-mic");
     $("mic-ico").innerHTML = micSVG(s.micMuted ? "#f4bcbc" : "#ff7ab8", s.micMuted, 28);
@@ -572,14 +812,20 @@
   }
 
   function renderApps() {
+    if (deferRender()) return;
     if (swipe) { pageRenderPending = true; return; }
     // A rebuild during a press (pending long-press OR active drag) would detach the
     // very tile under the finger — a background audio poll doing so is what made the
     // reorder silently fail. Freeze rebuilds until the gesture resolves.
     if (RO.active || RO.pending) return;
-    var grid = $("apps-grid"); grid.innerHTML = "";
-    model.apps.forEach(function (a) {
-      if ((model.presentation.hiddenApps || []).indexOf(a.id) >= 0) return;
+    var grid = $("apps-grid");
+    var visible = model.apps.filter(function (a) { return (model.presentation.hiddenApps || []).indexOf(a.id) < 0; });
+    var signature = JSON.stringify(visible.map(function (a) { return [a.id, a.name, a.iconKey, a.accent, a.badge, model.appInputBindings[a.id] || null]; }));
+    var rebuild = grid._structureSignature !== signature || grid.children.length !== visible.length ||
+      visible.some(function (a, i) { return grid.children[i].getAttribute("data-app-id") !== a.id; });
+    if (rebuild) { grid._structureSignature = signature; grid.innerHTML = ""; }
+    visible.forEach(function (a, index) {
+      if (!rebuild) { paintAppTile(grid.children[index], a); return; }
       var on = a.id === model.selectedId && model.dialMode === "app";
       var tile = el("button", "tile" + (on ? " on" : "") + (a.active ? "" : " silent"));
       if (on) { tile.style.background = hexA(a.accent, 0.13); tile.style.borderColor = hexA(a.accent, 0.55); }
@@ -601,7 +847,7 @@
       var chip = el("span", "chip" + (a.muted ? " muted" : ""));
       chip.title = "Mute app audio";
       chip.innerHTML = spkSVG(a.muted ? "#f2b5b5" : "#c9cdd6", a.muted, 20);
-      chip.onclick = function (e) { e.stopPropagation(); a.muted = !a.muted; send({ t: "set_mute", target: { kind: "session", id: a.id }, muted: a.muted }); buzz(HAPTIC.mute); renderApps(); if (model.selectedId === a.id) dial.setTarget(targetForDial()); nudgeActivity(); };
+      chip.onclick = function (e) { e.stopPropagation(); var current = findApp(a.id); if (!current) return; current.muted = !current.muted; send({ t: "set_mute", target: { kind: "session", id: current.id }, muted: current.muted }); buzz(HAPTIC.mute); renderApps(); if (model.selectedId === current.id) dial.setTarget(targetForDial()); nudgeActivity(); };
       // Input (mic) chip — the OS can't mute one app's mic, so this fires the app's
       // OWN mute/PTT hotkey (a user-bound combo). Toggle state is optimistic.
       var bound = model.appInputBindings[a.id];
@@ -615,7 +861,31 @@
       tile.setAttribute("data-app-id", a.id);
       tile.appendChild(top); tile.appendChild(bot); grid.appendChild(tile);
       enableReorder(tile, a);
+      paintAppTile(tile, a);
     });
+  }
+  function paintAppTile(tile, a) {
+    if (!tile) return;
+    var on = a.id === model.selectedId && model.dialMode === "app";
+    var visual = [on, a.muted, a.active, !!model.inputMuted[a.id]].join("|");
+    if (tile._visualSignature !== visual) {
+      tile._visualSignature = visual;
+      tile.className = "tile" + (on ? " on" : "") + (a.active ? "" : " silent");
+      tile.style.background = on ? hexA(a.accent, 0.13) : "";
+      tile.style.borderColor = on ? hexA(a.accent, 0.55) : "";
+      tile.querySelector(".tile-name").style.color = on ? "var(--ink)" : "var(--ink2)";
+      var chips = tile.querySelector(".tile-chips").children, bound = model.appInputBindings[a.id], muted = !!model.inputMuted[a.id];
+      chips[0].className = "chip" + (a.muted ? " muted" : "");
+      chips[0].innerHTML = spkSVG(a.muted ? "#f2b5b5" : "#c9cdd6", a.muted, 20);
+      chips[1].className = "chip mic" + (bound ? "" : " ghost") + (muted ? " muted" : "");
+      chips[1].innerHTML = micSVG(bound ? (muted ? "#f2b5b5" : "#ff9ec9") : "#5a5e68", muted, 20);
+    }
+    var pct = tile.querySelector(".tile-pct"), text = a.muted ? "—" : !a.active ? "IDLE · NO AUDIO" : a.level + "%";
+    if (pct._textSignature !== text) {
+      pct._textSignature = text;
+      if (pct.textContent !== text) pct.textContent = text;
+      pct.className = "tile-pct" + (a.muted ? " muted" : !a.active ? " idle" : "");
+    }
   }
 
   // ---- app-tile reordering (Android home-screen style: long-press to lift) ----
@@ -645,7 +915,7 @@
     if (!changed) return;
     if (swipe) swipe = null;
     applySavedOrder();
-    if (model.selectedId && (p.hiddenApps || []).indexOf(model.selectedId) >= 0) {
+    if (!model.selectedId || (p.hiddenApps || []).indexOf(model.selectedId) >= 0) {
       var visible = model.apps.filter(function (a) { return (p.hiddenApps || []).indexOf(a.id) < 0; });
       model.selectedId = visible.length ? visible[0].id : null;
     }
@@ -720,7 +990,9 @@
       var position = {}; RO.originalOrder.forEach(function (id, i) { position[id] = i; });
       model.apps.sort(function (a, b) { return position[a.id] - position[b.id]; });
     }
+    if (RO.tile) { RO.tile.classList.remove("tile-drag-src"); RO.tile.classList.remove("tile-held"); }
     RO.clone = null; RO.app = null; RO.tile = null;
+    RO.originalOrder = null;
     renderApps();
   }
   function roBegin(x, y) {
@@ -807,6 +1079,7 @@
     if (RO.tile) { RO.tile.classList.remove("tile-drag-src"); RO.tile.classList.remove("tile-held"); }
     var droppedApp = RO.app;
     RO.tile = null; RO.app = null;
+    RO.originalOrder = null;
     if (hide && (RO.moved || hideTarget)) hide.parentNode.removeChild(hide);
     else if (hide) setTimeout(function () { if (hide.parentNode) hide.parentNode.removeChild(hide); }, 5000);
     if (hideTarget && droppedApp) updatePresentation({ hiddenApps: (model.presentation.hiddenApps || []).concat([droppedApp.id]) });
@@ -874,7 +1147,11 @@
   }
 
   function renderDevices() {
+    if (deferRender()) return;
     if (swipe) { pageRenderPending = true; return; }
+    var signature = JSON.stringify([model.outputs, model.inputs]);
+    if (renderDevices.signature === signature) return;
+    renderDevices.signature = signature;
     fillDevList($("outputs"), model.outputs, "#4ddb7f", "output");
     fillDevList($("inputs"), model.inputs, "#ff7ab8", "input");
   }
@@ -907,9 +1184,14 @@
   // browser tab that's playing (or played last). Reached by an edge swipe: left in
   // portrait, down in landscape (or the edge handle / a tap).
   function renderMedia() {
+    if (deferRender()) return;
     if (swipe) { pageRenderPending = true; return; }
     updateMediaConn();
     var host = $("media-list"); if (!host) return;
+    var signature = JSON.stringify(model.media.map(function (s) { return [s.id, s.status, s.app, s.thumbKey, s.title, s.artist, s.canPrev, s.canNext]; }));
+    if (host._mediaSignature === signature) return;
+    host._mediaSignature = signature;
+    var scrollLeft = host.scrollLeft;
     host.innerHTML = "";
     var dots = $("media-dots"); if (dots) dots.innerHTML = "";
     if (!model.media.length) {
@@ -954,6 +1236,7 @@
       card.appendChild(app); card.appendChild(art); card.appendChild(meta); card.appendChild(tr);
       host.appendChild(card);
     });
+    host.scrollLeft = scrollLeft;
     // Scroll-status dots — one per source (only shown when there's more than one).
     if (dots && model.media.length > 1) {
       for (var i = 0; i < model.media.length; i++) dots.appendChild(el("span", "media-dot"));
@@ -964,6 +1247,9 @@
     var dot = $("media-conn-dot"), text = $("media-conn-text");
     if (!dot || !text) return;
     var st = model.connection;
+    var signature = st + "|" + model.latency;
+    if (updateMediaConn.signature === signature) return;
+    updateMediaConn.signature = signature;
     dot.className = "conn-dot" + (st === "reconnecting" ? " warn" : st === "disconnected" ? " err" : "");
     if (st === "connected") { text.textContent = model.latency != null ? "Connected · " + model.latency + "ms" : "Connected"; text.style.color = "var(--green-txt)"; }
     else if (st === "connecting") { text.textContent = "connecting…"; text.style.color = "var(--sub)"; }
@@ -990,6 +1276,7 @@
   function openMedia() { setActivePage("media"); }
   // Chrome (media handle etc.) is only available once the phone is paired.
   function updateChrome() {
+    if (deferRender()) return;
     var h = $("media-handle"), sb = $("tab-soundboard");
     if (h) h.style.display = model.paired ? "" : "none";
     if (sb) sb.style.display = model.paired ? "" : "none";
@@ -1016,11 +1303,18 @@
   }
   var padStarted = {}, padGesture = null, padRenderPending = false, editingSlot = -1, pendingClipSave = null;
   function renderSoundboard() {
+    if (deferRender()) return;
     var sb = model.soundboard || {};
     var stat = $("soundboard-status");
-    if (stat) stat.textContent = sb.error || (sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Set up routing on your PC");
+    var status = sb.error || (sb.runtime === "ready" ? "Routing ready · shared virtual mic" : "Set up routing on your PC");
+    if (stat && stat.textContent !== status) stat.textContent = status;
     var pads = $("soundboard-pads"); if (!pads) return;
     if (padGesture || swipe) { padRenderPending = true; return; }
+    var signature = JSON.stringify([model.presentation.padSlots, model.connection === "connected", (sb.clips || []).map(function (c) {
+      return [c.id, c.label, c.emoji, c.artwork, c.gain, c.voice, c.ears, c.duration, c.playing];
+    })]);
+    if (pads._padSignature === signature) return;
+    pads._padSignature = signature;
     pads.innerHTML = "";
     var clips = sb.clips || [];
     var byId = {};
@@ -1039,7 +1333,7 @@
       pad.disabled = model.connection !== "connected";
       pad.setAttribute("data-slot", slot);
       bindSoundboardPad(pad, clip, slot);
-      var icon = el("span", "sound-pad-emoji"); icon.textContent = clip.emoji || "♪";
+      var icon = soundboardIcon(clip, "sound-pad-emoji");
       var name = el("span", "sound-pad-name"); name.textContent = clip.label || "Untitled";
       var buses = el("span", "sound-pad-buses");
       if (clip.voice) { var v = el("span", "sound-pad-bus"); v.textContent = "OTHERS"; buses.appendChild(v); }
@@ -1138,22 +1432,39 @@
     updatePresentation({ padSlots: slots }); closeSoundboardEditor(); buzz(HAPTIC.mute);
   }
   function openSoundboardChooser(slot) {
-    var slots = model.presentation.padSlots || [], choices = $("soundboard-choices");
-    choices.innerHTML = "";
-    (model.soundboard.clips || []).forEach(function (clip) {
-      if (slots.indexOf(clip.id) >= 0) return;
-      var row = el("button", "soundboard-choice");
-      row.textContent = (clip.emoji || "♪") + "  " + (clip.label || "Untitled");
+    var choices = $("soundboard-choices"), search = $("soundboard-choice-search");
+    function renderChoices() {
+      var slots = model.presentation.padSlots || [], query = search.value.toLowerCase();
+      choices.innerHTML = "";
+      (model.soundboard.clips || []).forEach(function (clip) {
+        if (slots.indexOf(clip.id) >= 0 || [clip.label, clip.collection].concat(clip.tags || []).join(" ").toLowerCase().indexOf(query) < 0) return;
+        var row = el("button", "soundboard-choice");
+        row.appendChild(soundboardIcon(clip, "sound-choice-icon"));
+        var name = el("span", "sound-choice-label"); name.textContent = clip.label || "Untitled";
+        if (clip.collection) { var collection = el("small"); collection.textContent = clip.collection; name.appendChild(collection); }
+        row.appendChild(name);
       row.onclick = function () {
         var next = (model.presentation.padSlots || []).slice(); while (next.length < 12) next.push(null);
         if (next[slot] !== null || next.indexOf(clip.id) >= 0) { $("soundboard-chooser").className = "soundboard-editor hidden"; renderSoundboard(); return; }
         next[slot] = clip.id; updatePresentation({ padSlots: next });
         $("soundboard-chooser").className = "soundboard-editor hidden";
       };
-      choices.appendChild(row);
-    });
-    if (!choices.children.length) { var empty = el("p"); empty.textContent = "All sounds are already assigned. Add more from the PC."; choices.appendChild(empty); }
+        choices.appendChild(row);
+      });
+      if (!choices.children.length) { var empty = el("p"); empty.textContent = query ? "No matching unassigned sounds." : "All sounds are already assigned. Add more from the PC."; choices.appendChild(empty); }
+    }
+    search.value = ""; search.oninput = renderChoices; renderChoices();
     $("soundboard-chooser").className = "soundboard-editor";
+  }
+  function soundboardIcon(clip, className) {
+    var icon = el("span", className); icon.textContent = clip.emoji || "♪";
+    if (/^\/static\/meme-art\/[a-z0-9-]+\.webp$/.test(clip.artwork || "")) {
+      var img = el("img", "sound-art"); img.src = clip.artwork; img.alt = "";
+      img.loading = "lazy"; img.decoding = "async"; img.draggable = false;
+      img.onerror = function () { icon.textContent = clip.emoji || "♪"; };
+      icon.textContent = ""; icon.appendChild(img);
+    }
+    return icon;
   }
   function openSoundboard() {
     setActivePage("soundboard");
@@ -1170,12 +1481,16 @@
     return PAGE_DIR[(model.presentation.pages || {})[name] || (name === "mixer" ? "center" : "")] || [0, 0];
   }
   function renderNeighborCue(host, page, side) {
+    var signature = (page || "") + "|" + side;
+    if (host._cueSignature === signature) return;
+    host._cueSignature = signature;
     host.replaceChildren(); if (!page) return;
     var chevron=el("i", "neighbor-chevron" + (side === "bottom" ? " down" : ""));
     chevron.setAttribute("aria-hidden", "true"); host.appendChild(chevron);
     host.appendChild(document.createTextNode(page[0].toUpperCase() + page.slice(1)));
   }
   function layoutPages(dx, dy, animate) {
+    if (deferRender()) return;
     var active = pagePosition(model.activePage), w = $("pager").clientWidth, h = $("pager").clientHeight;
     var handle = $("media-handle");
     var vertical = neighborFor("top") || neighborFor("bottom");
@@ -1212,8 +1527,10 @@
   function setActivePage(name) {
     if (!model.paired && name !== "mixer") return;
     if (!pageNodes[name] || name === model.activePage) return;
+    if (dial) dial.cancel();
     swipe = null;
     model.activePage = name;
+    syncMeterLoop();
     if (desktopPreview) window.parent.postMessage({ t: "preview-page", page: name }, location.origin);
     layoutPages(0, 0, true);
     if (name === "soundboard") renderSoundboard();
@@ -1295,7 +1612,15 @@
   // signal peak, so the bars "breathe" with real audio (0 when silent/muted).
   var METER_PATTERN = { output: [11, 19, 10, 21, 13, 16], input: [9, 15, 8, 17, 11, 14] };
   var meterDisp = { output: 0, input: 0 };
+  var meterAnimation = null;
+  function syncMeterLoop() {
+    var active = renderingAllowed() && model.activePage === "devices";
+    if (!active && meterAnimation !== null) { cancelAnimationFrame(meterAnimation); meterAnimation = null; }
+    else if (active && meterAnimation === null) meterAnimation = requestAnimationFrame(meterFrame);
+  }
   function meterFrame() {
+    meterAnimation = null;
+    if (model.activePage !== "devices" || !renderingAllowed()) return;
     ["output", "input"].forEach(function (flow) {
       // Perceptual gain: raw peaks are small; sqrt lifts quiet signal into view.
       var connected = model.connection === "connected";
@@ -1311,7 +1636,7 @@
           bars[i].style.height = (3 + pat[i] * lvl).toFixed(1) + "px";
       }
     });
-    requestAnimationFrame(meterFrame);
+    syncMeterLoop();
   }
 
   // ---- mode switch, tabs, pager ----
@@ -1325,6 +1650,7 @@
   // ---- toast ----
   var toastTimer = null;
   function showToast(title, sub, success) {
+    if (!renderingAllowed()) { suspendedToast = [title, sub, success]; return; }
     var t = $("toast"); t.className = "toast" + (success ? " toast-success" : "");
     t.innerHTML = '<span class="t-ico">' + errSVG() + '</span><div class="spacer" style="flex:1"><div class="t-title">' + title + '</div><div class="t-sub">' + (sub || "") + '</div></div><span class="t-x">×</span>';
     t.querySelector(".t-x").onclick = function () { t.className = "toast hidden"; };
@@ -1421,15 +1747,20 @@
   }
   function enterSaver() {
     var s = $("saver"); if (!s) return;
+    saverActive = true; syncMeterLoop();
+    if (mixRenderFrame) { cancelAnimationFrame(mixRenderFrame); mixRenderFrame = null; }
     updateClock(); s.className = "saver";
     if (clockTimer) clearInterval(clockTimer); clockTimer = setInterval(updateClock, 20000);
   }
   function exitSaver() {
+    var wasActive = saverActive; saverActive = false;
     var s = $("saver"); if (s) s.className = "saver hidden";
     if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+    if (wasActive) resumeRendering();
   }
   function nudgeActivity() {
     if (desktopPreview) return;
+    if (!foregroundAllowed()) return;
     $("app").classList.remove("resting"); exitSaver();
     if (restTimer) clearTimeout(restTimer);
     if (saverTimer) clearTimeout(saverTimer);
@@ -1466,7 +1797,66 @@
   }
 
   // ---- wake lock + service worker ----
-  function requestWakeLock() { if (!("wakeLock" in navigator)) return; try { navigator.wakeLock.request("screen").catch(function () {}); } catch (e) {} }
+  function releaseWakeLock() { if (wakeLock) { try { wakeLock.release(); } catch (e) {} wakeLock = null; } }
+  function requestWakeLock() {
+    if (desktopPreview || powerMode !== "mounted" || !foregroundAllowed() || wakeLock || wakeLockPending || !("wakeLock" in navigator)) return;
+    // The native shell owns its Window flag; a second web wake lock would defeat battery mode.
+    var bridge = nativeBridge(); if (bridge && bridge.getPowerMode) return;
+    wakeLockPending = true;
+    try { navigator.wakeLock.request("screen").then(function (lock) {
+      wakeLockPending = false;
+      if (powerMode !== "mounted" || !foregroundAllowed()) { lock.release(); return; }
+      wakeLock = lock; lock.addEventListener("release", function () { if (wakeLock === lock) wakeLock = null; });
+    }, function () { wakeLockPending = false; }); } catch (e) { wakeLockPending = false; }
+  }
+  function choosePowerMode(mode) {
+    powerMode = mode === "battery" ? "battery" : "mounted";
+    try { localStorage.setItem("sc_power_mode", powerMode); } catch (e) {}
+    var bridge = nativeBridge();
+    if (bridge && bridge.setPowerMode) { try { bridge.setPowerMode(powerMode); } catch (e) {} }
+    var button = $("power-mode");
+    if (button) { button.textContent = powerMode === "mounted" ? "Mounted" : "Battery"; button.title = powerMode === "mounted" ? "Screen stays on while Deckster is open. Tap for battery mode." : "Use the normal screen timeout. Tap for mounted mode."; }
+    if (powerMode === "battery") releaseWakeLock(); else requestWakeLock();
+  }
+  function resumeRendering() {
+    if (!renderingAllowed()) return;
+    var messages = suspendedState, targets = suspendedTargets;
+    suspendedState = {}; suspendedTargets = {};
+    drainingState = true;
+    try {
+      if (messages.snapshot) handle(messages.snapshot);
+      Object.keys(targets).forEach(function (id) { handle(targets[id]); });
+      ["presentation", "media", "soundboard", "meters"].forEach(function (type) { if (messages[type]) handle(messages[type]); });
+    } finally { drainingState = false; }
+    if (renderPending) { setConnection(model.connection); updateChrome(); renderAll(); layoutPages(0, 0, false); }
+    if (suspendedToast) { var toast = suspendedToast; suspendedToast = null; showToast(toast[0], toast[1], toast[2]); }
+    syncMeterLoop();
+  }
+  var cancelForLifecycle = null;
+  function updateLifecycle() {
+    var active = foregroundAllowed();
+    document.body.classList.toggle("suspended", !active);
+    if (!active) {
+      if (cancelForLifecycle) cancelForLifecycle();
+      clearVolumePending(); volumeIntents = {}; muteIntents = {}; pendingCommands = {};
+      if (mixRenderFrame) { cancelAnimationFrame(mixRenderFrame); mixRenderFrame = null; }
+      clearTimeout(reconnectTimer); reconnectTimer = null;
+      clearInterval(pingTimer); pingTimer = null;
+      clearTimeout(restTimer); clearTimeout(saverTimer); clearInterval(clockTimer); clockTimer = null;
+      stopScan(); releaseWakeLock();
+      if (!desktopPreview && ws) { var previous = ws; ws = null; snapshotReady = false; try { previous.close(); } catch (e) {} setConnection("reconnecting"); }
+    } else {
+      resumeRendering(); ensureConnected(); requestWakeLock();
+      if (saverActive && !clockTimer) { updateClock(); clockTimer = setInterval(updateClock, 20000); }
+      else nudgeActivity();
+    }
+    syncMeterLoop();
+  }
+  window.DecksterLifecycle = function (state) {
+    if (state && typeof state.foreground === "boolean") nativeForeground = state.foreground;
+    if (state && state.powerMode) choosePowerMode(state.powerMode);
+    updateLifecycle();
+  };
   function chooseOrient() { return (window.innerWidth >= window.innerHeight) ? "left" : "up"; }
 
   // ================================================================ init
@@ -1477,9 +1867,17 @@
     $("pager").appendChild(pageNodes.soundboard);
     Object.keys(pageNodes).forEach(function (name) { pageNodes[name].classList.add("spatial-page"); });
     layoutPages(0, 0, false);
-    dial = new Dial($("dial-host"), { onChange: dialOnChange, onCommit: dialOnCommit, onToggleMute: dialToggleMute });
+    dial = new Dial($("dial-host"), { onChange: dialOnChange, onCommit: dialOnCommit, onCancel: dialOnCancel, onToggleMute: dialToggleMute });
     dial.setOrient(chooseOrient());
     dial.setTarget(targetForDial());
+    if (!desktopPreview) {
+      var powerButton = el("button", "power-mode"); powerButton.id = "power-mode";
+      document.querySelector(".topbar").insertBefore(powerButton, document.querySelector(".topbar .spacer"));
+      powerButton.onclick = function () { choosePowerMode(powerMode === "mounted" ? "battery" : "mounted"); nudgeActivity(); };
+      var storedMode = "mounted", bridge = nativeBridge();
+      try { storedMode = bridge && bridge.getPowerMode ? bridge.getPowerMode() : localStorage.getItem("sc_power_mode") || "mounted"; } catch (e) {}
+      choosePowerMode(storedMode);
+    }
 
     // mode switch
     var mbtns = document.querySelectorAll("#mode-switch .mode-btn");
@@ -1540,8 +1938,17 @@
       if (Date.now() - reorderJustEnded < 300 && e.target.closest && e.target.closest(".sound-pad")) { e.preventDefault(); e.stopImmediatePropagation(); }
     }, true);
     // resume-resync
-    document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") { ensureConnected(); requestWakeLock(); } });
-    window.addEventListener("pageshow", ensureConnected); window.addEventListener("online", ensureConnected); window.addEventListener("focus", ensureConnected);
+    function cancelGestures() {
+      dial.cancel(); if (RO.pending || RO.active) roCancel();
+      swipe = null; layoutPages();
+      if (padGesture) { clearTimeout(padGesture.timer); padGesture = null; }
+      if (padRenderPending) { padRenderPending = false; renderSoundboard(); }
+    }
+    cancelForLifecycle = cancelGestures;
+    window.addEventListener("blur", cancelGestures);
+    window.addEventListener("pagehide", function () { nativeForeground = false; updateLifecycle(); });
+    document.addEventListener("visibilitychange", updateLifecycle);
+    window.addEventListener("pageshow", function () { nativeForeground = true; updateLifecycle(); }); window.addEventListener("online", ensureConnected); window.addEventListener("focus", ensureConnected);
     window.addEventListener("resize", function () { swipe = null; dial.setOrient(chooseOrient()); layoutPages(0, 0, false); });
     if (!desktopPreview && "serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("/sw.js").catch(function () {}); });
 
@@ -1549,6 +1956,8 @@
     if (desktopPreview) {
       document.body.classList.add("desktop-preview");
       window.addEventListener("message", function (event) {
+        if (event.source === window.parent && event.origin === location.origin && event.data && event.data.t === "preview-visibility") { previewForeground = !!event.data.visible; updateLifecycle(); return; }
+        if (event.source === window.parent && event.origin === location.origin && event.data && event.data.t === "preview-result") { handle(event.data.result); return; }
         if (event.source === window.parent && event.origin === location.origin && event.data && event.data.t === "preview-error") { handle({ t: "error", msg: event.data.message }); return; }
         if (event.source !== window.parent || event.origin !== location.origin || !event.data || event.data.t !== "preview-state") return;
         if (document.body.dataset.desktopGesture === "active") return;
@@ -1556,7 +1965,7 @@
       });
       window.parent.postMessage({ t: "preview-ready" }, location.origin);
     } else { connect(); requestWakeLock(); nudgeActivity(); }
-    if (window.requestAnimationFrame) requestAnimationFrame(meterFrame);
+    syncMeterLoop();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();

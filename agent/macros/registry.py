@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import threading
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ class MacroRegistry:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._macros: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
         self._load()
 
     # ---- persistence ------------------------------------------------------
@@ -42,10 +45,12 @@ class MacroRegistry:
 
     # ---- operations -------------------------------------------------------
     def list(self) -> list[dict[str, Any]]:
-        return list(self._macros.values())
+        with self._lock:
+            return deepcopy(list(self._macros.values()))
 
     def get(self, macro_id: str) -> dict[str, Any] | None:
-        return self._macros.get(macro_id)
+        with self._lock:
+            return deepcopy(self._macros.get(macro_id))
 
     def add(self, label: str, keys: str) -> dict[str, Any]:
         """Create a macro after validating the combo. Raises ComboError if invalid."""
@@ -53,13 +58,25 @@ class MacroRegistry:
         label = (label or keys).strip()[:60]
         macro_id = f"{_slug(label)}-{secrets.token_hex(3)}"
         macro = {"id": macro_id, "label": label, "keys": keys.strip()}
-        self._macros[macro_id] = macro
-        self._save()
-        return macro
+        with self._lock:
+            if macro_id in self._macros:
+                raise ValueError("Macro identity collision. Try again.")
+            self._macros[macro_id] = macro
+            try:
+                self._save()
+            except Exception:
+                self._macros.pop(macro_id, None)
+                raise
+        return dict(macro)
 
     def remove(self, macro_id: str) -> bool:
-        if macro_id in self._macros:
-            del self._macros[macro_id]
-            self._save()
+        with self._lock:
+            if macro_id not in self._macros:
+                return False
+            previous = self._macros.pop(macro_id)
+            try:
+                self._save()
+            except Exception:
+                self._macros[macro_id] = previous
+                raise
             return True
-        return False

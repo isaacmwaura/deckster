@@ -88,6 +88,7 @@ async def engine_client(registry=None, key_sender=None, authenticator=None,
         yield client, state, controller
     finally:
         await client.close()
+        await controller.close()
 
 
 async def recv(ws):

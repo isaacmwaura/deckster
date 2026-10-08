@@ -66,3 +66,15 @@ def route_issue(config: dict, snapshot: dict) -> str:
 def receiving_microphone(config: dict, snapshot: dict) -> str:
     return next((p[1]["name"] for p in cable_pairs(snapshot.get("outputs", []), snapshot.get("inputs", []))
                  if p[0]["id"] == config.get("voiceOutputId")), "Choose a virtual cable in box 2 first")
+
+
+def routing_status(snapshot: dict) -> dict:
+    config = snapshot.get("config", {})
+    receiver = next((p[1] for p in cable_pairs(snapshot.get("outputs", []), snapshot.get("inputs", []))
+                     if p[0]["id"] == config.get("voiceOutputId")), None)
+    default = next((d for d in snapshot.get("inputs", []) if d.get("isDefault")), None)
+    ready = snapshot.get("runtime") == "ready" and not route_issue(config, snapshot)
+    mode = "mixed" if ready and receiver and default and default["id"] == receiver["id"] else "bypass" if default and not is_virtual(default) else "unknown"
+    return {"ready": ready, "mode": mode, "receiverId": receiver["id"] if receiver else "",
+            "defaultInput": default.get("name", "") if default else "",
+            "issue": route_issue(config, snapshot)}

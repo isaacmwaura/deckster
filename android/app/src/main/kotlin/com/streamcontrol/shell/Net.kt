@@ -15,6 +15,19 @@ import javax.net.ssl.X509TrustManager
 /** Small networking + certificate helpers shared by the shell. */
 object Net {
 
+    /** Cancels an in-flight health request when a newer choice or pause owns the flow. */
+    class Probe {
+        @Volatile private var cancelled = false
+        private var connection: HttpURLConnection? = null
+        @Synchronized fun attach(value: HttpURLConnection): Boolean {
+            if (cancelled) { value.disconnect(); return false }
+            connection = value
+            return true
+        }
+        @Synchronized fun detach(value: HttpURLConnection) { if (connection === value) connection = null }
+        @Synchronized fun cancel() { cancelled = true; connection?.disconnect(); connection = null }
+    }
+
     enum class PinnedProbe { VERIFIED, UNAVAILABLE, PIN_MISMATCH, INVALID_RESPONSE }
 
     private fun decksterHealth(connection: HttpURLConnection): Boolean {
@@ -25,21 +38,20 @@ object Net {
     }
 
     /** True only when the health response identifies the Deckster agent. */
-    fun reachable(url: String, timeoutMs: Int = 800): Boolean = try {
+    fun reachable(url: String, timeoutMs: Int = 800, probe: Probe? = null): Boolean = try {
         (URL(url).openConnection() as HttpURLConnection).run {
+            if (probe != null && !probe.attach(this)) return false
             connectTimeout = timeoutMs
             readTimeout = timeoutMs
             requestMethod = "GET"
-            val ok = decksterHealth(this)
-            disconnect()
-            ok
+            try { decksterHealth(this) } finally { probe?.detach(this); disconnect() }
         }
     } catch (e: Exception) {
         false
     }
 
     /** Probe a self-signed Deckster over USB with the previously saved certificate pin. */
-    fun reachablePinned(url: String, fingerprint: String, timeoutMs: Int = 800): PinnedProbe {
+    fun reachablePinned(url: String, fingerprint: String, timeoutMs: Int = 800, probe: Probe? = null): PinnedProbe {
         val expected = fingerprint.replace(":", "").uppercase()
         if (fingerprint.isBlank()) return PinnedProbe.UNAVAILABLE
         if (!expected.matches(Regex("[0-9A-F]{64}"))) return PinnedProbe.PIN_MISMATCH
@@ -66,6 +78,7 @@ object Net {
             val context = SSLContext.getInstance("TLS")
             context.init(null, arrayOf(trust), null)
             val connection = URL(url).openConnection() as HttpsURLConnection
+            if (probe != null && !probe.attach(connection)) return PinnedProbe.UNAVAILABLE
             connection.sslSocketFactory = context.socketFactory
             // The trusted PC certificate is pinned above; its LAN hostname can
             // differ from localhost when the same server is reached over USB.
@@ -76,6 +89,7 @@ object Net {
             try {
                 if (decksterHealth(connection)) PinnedProbe.VERIFIED else PinnedProbe.INVALID_RESPONSE
             } finally {
+                probe?.detach(connection)
                 connection.disconnect()
             }
         } catch (e: Exception) {

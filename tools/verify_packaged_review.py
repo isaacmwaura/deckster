@@ -27,7 +27,7 @@ def _free_port() -> int:
 
 async def _check(port: int, token: str, expected_version: str,
                  expected_clips: int, expected_slots: int,
-                 process: subprocess.Popen) -> dict:
+                 process: subprocess.Popen, require_command_protocol: bool = False) -> dict:
     base = f"http://127.0.0.1:{port}"
     timeout = aiohttp.ClientTimeout(total=5)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -81,6 +81,38 @@ async def _check(port: int, token: str, expected_version: str,
                     raise AssertionError(f"Isolated WebSocket authentication failed: {message.get('t')}")
             if snapshot is None:
                 raise AssertionError("Authenticated WebSocket snapshot was not received")
+            if require_command_protocol:
+                if not {"command-results", "owner-sequence"}.issubset(snapshot.get("capabilities", [])):
+                    raise AssertionError("Rebuilt command protocol is absent from the package")
+                epoch = snapshot.get("serverEpoch")
+                if not epoch:
+                    raise AssertionError("Package did not announce a server epoch")
+                await ws.send_json({"t": "set_volume", "target": {"kind": "mic"}, "level": .37,
+                                    "commandId": "package-review-volume", "clientSeq": 1, "serverEpoch": epoch})
+                accepted = False
+                while True:
+                    message = await ws.receive_json(timeout=5)
+                    if message.get("commandId") != "package-review-volume":
+                        continue
+                    accepted |= message.get("status") == "accepted"
+                    if message.get("status") == "applied":
+                        if not accepted or message.get("ownerSeq", 0) <= 0 or message.get("observation", {}).get("level") != .37:
+                            raise AssertionError("Packaged mock write/readback did not reconcile")
+                        break
+                    if message.get("status") in {"failed", "outcome_unknown"}:
+                        raise AssertionError("Packaged isolated control failed")
+
+        if require_command_protocol:
+            async with session.get(desktop_base + "/ready") as response:
+                if response.status != 200 or not (await response.json()).get("ready"):
+                    raise AssertionError("Packaged engine/connection is not ready")
+            async with session.get(desktop_base + "/admin/api/diagnostics") as response:
+                response.raise_for_status()
+                if "audio" not in await response.json():
+                    raise AssertionError("Packaged audio diagnostics missing")
+            async with session.get(base + "/ready", headers={"Host": "untrusted.example"}) as response:
+                if response.status != 403:
+                    raise AssertionError("Packaged diagnostics accepted a foreign Host")
 
         clips = snapshot.get("soundboard", {}).get("clips", [])
         slots = snapshot.get("presentation", {}).get("padSlots", [])
@@ -90,7 +122,8 @@ async def _check(port: int, token: str, expected_version: str,
             raise AssertionError(f"Phone layout has {len(slots)} slots, expected {expected_slots}")
         return {"version": admin["version"], "mode": admin["mode"], "desktopUrl": desktop_url,
                 "libraryClips": len(clips), "phoneSlots": len(slots),
-                "authenticatedWebSocket": True}
+                "authenticatedWebSocket": True,
+                "commandProtocolReadinessAndDiagnostics": require_command_protocol}
 
 
 def _stop_own_process_tree(process: subprocess.Popen) -> None:
@@ -117,6 +150,8 @@ def main() -> None:
     parser.add_argument("--expected-version", default="0.6.0")
     parser.add_argument("--expected-clips", type=int, default=16)
     parser.add_argument("--expected-slots", type=int, default=12)
+    parser.add_argument("--require-command-protocol", action="store_true",
+                        help="verify v0.7+ IDs/readback/readiness using only the isolated mock backend")
     args = parser.parse_args()
     exe = args.exe.resolve(strict=True)
     if not exe.is_file() or exe.suffix.lower() != ".exe":
@@ -155,8 +190,18 @@ def main() -> None:
     )
     try:
         result = asyncio.run(_check(port, token, args.expected_version,
-                                    args.expected_clips, args.expected_slots, process))
+                                    args.expected_clips, args.expected_slots, process,
+                                    args.require_command_protocol))
         log_path = state / "agent.log"
+        from PyInstaller.archive.readers import CArchiveReader
+        archive = CArchiveReader(str(exe))
+        contents = {name.replace('\\', '/') for name in archive.toc}
+        required = {'bin/adb/adb.exe', 'bin/adb/AdbWinApi.dll', 'bin/adb/AdbWinUsbApi.dll', 'bin/adb/NOTICE.txt'}
+        if not required.issubset(contents):
+            raise AssertionError("Standalone USB runtime incomplete: " + str(required - contents))
+        if not any(name.lower().startswith('python3') and name.lower().endswith('.dll') for name in contents):
+            raise AssertionError("Bundled Python runtime missing")
+        result["bundledPythonAndUsbRuntimeVerified"] = True
         if log_path.exists() and "adb watcher started" in log_path.read_text(encoding="utf-8"):
             raise AssertionError("Mock review must not start the live USB watcher")
         result["liveUsbWatcherDisabled"] = True

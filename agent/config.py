@@ -2,7 +2,8 @@
 
 All machine-managed state lives under %LOCALAPPDATA%\\StreamControl\\. Config is
 plain JSON (not TOML) so we carry no extra dependency on Python 3.10, and it is
-rarely hand-edited. First run generates a random port fallback and a token salt.
+rarely hand-edited. First run saves the preferred port and a random token salt;
+startup selects an available fallback port when the preferred port is occupied.
 """
 from __future__ import annotations
 

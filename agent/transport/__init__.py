@@ -1,1 +1,1 @@
-"""Transport helpers: wired USB-C via adb reverse (and later TLS for Wi-Fi)."""
+"""USB-C reverse tunneling; listener TLS and LAN discovery live in agent.tls/discovery."""

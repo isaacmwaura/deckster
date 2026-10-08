@@ -8,6 +8,7 @@ import android.net.nsd.NsdServiceInfo
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,8 +43,29 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     // When true, a resolved PC is OFFERED (OfferWifi) rather than auto-connected —
     // the mode we run in after a USB drop, so the user chooses to move to Wi-Fi.
     private var handoffMode = false
+    private var foreground = false
+    private var generation = 0L
+    private var attempt: Job? = null
+    private var networkProbe: Net.Probe? = null
 
-    init { probeUsbThenSearch() }
+    /** Connection work and discovery belong to the visible activity, not its retained VM. */
+    fun setForeground(active: Boolean) {
+        if (foreground == active) return
+        foreground = active
+        if (!active) cancelAttempt()
+        else if (_state.value is UiState.Searching || _state.value is UiState.NeedConnect) probeUsbThenSearch()
+    }
+
+    private fun cancelAttempt(): Long {
+        generation++
+        attempt?.cancel(); attempt = null
+        networkProbe?.cancel(); networkProbe = null
+        handoffMode = false
+        stopDiscovery()
+        return generation
+    }
+
+    private fun current(ticket: Long): Boolean = foreground && ticket == generation
 
     fun retryUsb() = probeUsbThenSearch()
 
@@ -58,10 +80,12 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
      * reconnect/banner (we're already on Wi-Fi, nowhere better to hand off to).
      * Runs from the JS-bridge thread, so bounce onto the main scope.
      */
-    fun onConnectionLost(@Suppress("UNUSED_PARAMETER") origin: String) {
+    fun onConnectionLost(origin: String) {
         viewModelScope.launch {
             val s = _state.value
-            if (s !is UiState.Connected || !isLocal(s.url)) return@launch
+            if (!foreground || s !is UiState.Connected || !isLocal(s.url)) return@launch
+            val currentOrigin = Uri.parse(s.url).let { "${it.scheme}://${it.encodedAuthority}" }
+            if (origin != currentOrigin) return@launch
             seekWifiHandoff()
         }
     }
@@ -86,24 +110,24 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     /** Briefly discover the PC on the LAN; the first one found becomes a Wi-Fi offer. */
     private fun seekWifiHandoff() {
         if (handoffMode) return
+        val ticket = cancelAttempt()
         handoffMode = true
-        startDiscovery()
-        viewModelScope.launch {
+        startDiscovery(ticket)
+        attempt = viewModelScope.launch {
             kotlinx.coroutines.delay(HANDOFF_TIMEOUT_MS)
-            if (handoffMode) { handoffMode = false; stopDiscovery() }   // not on the same Wi-Fi
+            if (current(ticket) && handoffMode) { handoffMode = false; stopDiscovery() }
         }
     }
 
     fun connect(pc: Pc) {
-        handoffMode = false
-        stopDiscovery()
+        cancelAttempt()
         store.rememberPcFromUrl(pc.url, pc.fingerprint, pc.name)
         _state.value = UiState.Connected(pc.url, pc.fingerprint)
     }
 
     /** From a scanned QR or a typed address (no pinned fingerprint on this path yet). */
     fun connectUrl(url: String, fingerprint: String = "") {
-        stopDiscovery()
+        cancelAttempt()
         val norm = normalize(url)
         val parsed = Uri.parse(norm)
         val qrPin = parsed.getQueryParameter("fp") ?: ""
@@ -131,32 +155,39 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
      * PC has been set up, opening the app just reconnects — no re-scan.
      */
     private fun probeUsbThenSearch() {
-        handoffMode = false
+        val ticket = cancelAttempt()
         _state.value = UiState.Searching
-        viewModelScope.launch {
+        if (!foreground) return
+        val probe = Net.Probe().also { networkProbe = it }
+        attempt = viewModelScope.launch {
             val last = store.lastPc()
             val pin = last?.fingerprint ?: ""
             val usbTls = withContext(Dispatchers.IO) {
-                Net.reachablePinned("https://localhost:$port/health", pin)
+                Net.reachablePinned("https://localhost:$port/health", pin, probe = probe)
             }
+            if (!current(ticket)) return@launch
             if (usbTls == Net.PinnedProbe.VERIFIED) {
                 // Keep the remembered LAN host and pin for USB→Wi-Fi handoff.
                 _state.value = UiState.Connected("https://localhost:$port/", pin); return@launch
             }
-            if (usbTls == Net.PinnedProbe.UNAVAILABLE &&
-                withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health") }) {
+            val plainUsb = usbTls == Net.PinnedProbe.UNAVAILABLE &&
+                withContext(Dispatchers.IO) { Net.reachable("http://localhost:$port/health", probe = probe) }
+            if (!current(ticket)) return@launch
+            if (plainUsb) {
                 _state.value = UiState.Connected("http://localhost:$port/", ""); return@launch
             }
             if (usbTls == Net.PinnedProbe.UNAVAILABLE &&
                 last != null && last.url.startsWith("http://")) {   // LAN HTTP fallback
                 val health = last.url.trimEnd('/') + "/health"
-                if (withContext(Dispatchers.IO) { Net.reachable(health) }) {
+                val reachable = withContext(Dispatchers.IO) { Net.reachable(health, probe = probe) }
+                if (!current(ticket)) return@launch
+                if (reachable) {
                     connect(last); return@launch
                 }
             }
             found.clear()
             _state.value = UiState.NeedConnect(found.values.toList())
-            startDiscovery()
+            startDiscovery(ticket)
         }
     }
 
@@ -166,15 +197,20 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- mDNS discovery ------------------------------------------------------
-    private fun startDiscovery() {
-        if (discoveryListener != null) return
+    private fun startDiscovery(ticket: Long) {
+        if (!current(ticket) || discoveryListener != null) return
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                val failedListener = this
+                viewModelScope.launch { if (current(ticket) && discoveryListener === failedListener) discoveryListener = null }
+            }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
             override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onServiceFound(service: NsdServiceInfo) = resolve(service)
+            override fun onServiceFound(service: NsdServiceInfo) {
+                viewModelScope.launch { if (current(ticket) && discoveryListener != null) resolve(service, ticket) }
+            }
         }
         discoveryListener = listener
         try {
@@ -184,11 +220,13 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun resolve(service: NsdServiceInfo) {
+    private fun resolve(service: NsdServiceInfo, ticket: Long) {
         val rl = object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
             override fun onServiceResolved(info: NsdServiceInfo) {
-                val host = info.host?.hostAddress ?: return
+                viewModelScope.launch {
+                if (!current(ticket) || discoveryListener == null) return@launch
+                val host = info.host?.hostAddress ?: return@launch
                 val attrs = info.attributes
                 val secure = attrs["secure"]?.toString(Charsets.UTF_8) == "1"
                 val fp = attrs["fp"]?.toString(Charsets.UTF_8) ?: ""
@@ -198,18 +236,19 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
                 // auto-connecting — the user confirms the move to Wi-Fi (see onConnectionLost).
                 if (handoffMode) {
                     val knownFp = store.lastPcFingerprint()
-                    if (knownFp.isNotEmpty() && !fp.equals(knownFp, ignoreCase = true)) return
+                    if (knownFp.isNotEmpty() && !fp.equals(knownFp, ignoreCase = true)) return@launch
                     handoffMode = false; stopDiscovery()
                     if (_state.value is UiState.Connected) _state.value = UiState.OfferWifi(pc)
-                    return
+                    return@launch
                 }
                 // A trusted PC (its pinned fingerprint matches the one we remember)
                 // reappearing on the network -> reconnect automatically, no tap.
                 val knownFp = store.lastPcFingerprint()
-                if (knownFp.isNotEmpty() && fp == knownFp) { connect(pc); return }
+                if (knownFp.isNotEmpty() && fp.equals(knownFp, ignoreCase = true)) { connect(pc); return@launch }
                 found[pc.url] = pc
                 if (_state.value is UiState.NeedConnect || _state.value is UiState.Searching) {
                     _state.value = UiState.NeedConnect(found.values.toList())
+                }
                 }
             }
         }
@@ -221,7 +260,7 @@ class ConnectViewModel(app: Application) : AndroidViewModel(app) {
         discoveryListener = null
     }
 
-    override fun onCleared() = stopDiscovery()
+    override fun onCleared() { foreground = false; cancelAttempt(); super.onCleared() }
 
     companion object {
         private const val SERVICE_TYPE = "_streamctl._tcp."

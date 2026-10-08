@@ -53,3 +53,32 @@ async def test_ws_subscribe_snapshot_shape(client):
     assert set(snap.keys()) >= {"sessions", "devices", "macros"}
     assert "speakerMaster" in snap["devices"]
     await ws.close()
+
+
+async def test_viewports_require_auth_validate_dimensions_and_expire(client):
+    from agent.server import STATE_KEY
+    state = client.server.app[STATE_KEY]
+    ws = await client.ws_connect("/ws")
+    await ws.send_json({"t": "viewport", "width": 960, "height": 432})
+    assert (await ws.receive_json())["code"] == "unauth"
+    assert not state.client_viewports
+    await ws.send_json({"t": "hello"})
+    await ws.receive_json()
+    for width in (True, 1, 9000, "960"):
+        await ws.send_json({"t": "viewport", "width": width, "height": 432})
+    await ws.send_json({"t": "ping"})
+    await ws.receive_json()
+    assert not state.client_viewports
+    await ws.send_json({"t": "viewport", "width": 873, "height": 393, "name": "Tablet"})
+    await ws.send_json({"t": "ping"})
+    await ws.receive_json()
+    assert list(state.client_viewports.values())[0] == {
+        "width": 873, "height": 393, "name": "Tablet", "deviceId": ""}
+    await ws.close()
+    # Closing handshake may finish before the server finally block.
+    import asyncio
+    for _ in range(20):
+        if not state.client_viewports:
+            break
+        await asyncio.sleep(.01)
+    assert not state.client_viewports

@@ -16,9 +16,8 @@
         android:hardwareAccelerated="true"
         android:theme="@style/Theme.StreamControl"
         android:usesCleartextTraffic="true">
-        <!-- usesCleartextTraffic: the agent serves HTTP over USB(localhost) and LAN
-             until pinned TLS lands. Scope this to localhost + the LAN with a
-             network-security-config once TLS ships. -->
+        <!-- HTTP remains an optional USB/LAN transport. Pinned TLS is implemented
+             in the native probe and WebView; cleartext is allowed for HTTP mode. -->
 
         <activity
             android:name=".MainActivity"
