@@ -1,4 +1,8 @@
-# Deckster — Android app
+# Deckster — Android development
+
+To install and connect Deckster, follow the combined
+[PC and phone setup guide](../README.md#install-on-your-pc-and-phone).
+The instructions here are for building the Android app from source.
 
 A thin **native WebView shell** around the web control surface in [`../web/`](../web).
 It gives the phone a home-screen app, guaranteed fullscreen, a hard landscape lock,
@@ -61,8 +65,8 @@ and connection data. The PC's sound library and saved layout remain on the PC.
 A browser's localStorage is per origin; native token storage bridges USB and
 Wi-Fi reconnection. Phone pinned TLS is independent of the desktop loopback UI.
 
-Download the v0.7.0 APK and matching Windows EXE from
-[Releases](https://github.com/isaacmwaura/deckster/releases/tag/v0.7.0).
+For app downloads and installation, use the combined
+[PC and phone setup guide](../README.md#install-on-your-pc-and-phone).
 See [CHANGELOG.md](../CHANGELOG.md) for changes and validation limits.
 
 ## Status
