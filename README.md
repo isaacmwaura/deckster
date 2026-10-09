@@ -54,11 +54,35 @@ Volume and microphone controls work without extra audio software. Sending sound 
 
 **Others** sends a sound into the game or call. **Me** plays it in your headphones. You can select either or both.
 
-![The phone soundboard with assignable sound pads](docs/img/phone-soundboard-v0.7.0.png)
-
-*The app's soundboard, shown with demonstration data.*
-
 The public build includes **16 CC0 starter sounds**. CC0 means they can be used freely under the included public-domain dedication. You can also import your own WAV, MP3, OGG or FLAC recordings.
+
+## Phone screens
+
+Actual v0.7.0 phone screens with demonstration data. Every image is **3840 pixels wide**. Open the full-size links to zoom in.
+
+### Mixer
+
+![Deckster phone mixer with demonstration data](docs/img/phone-mixer-v0.7.0.png)
+
+Change individual app volumes and mute your microphone. Spotify is selected in this example. [Open full size](docs/img/phone-mixer-v0.7.0.png).
+
+### Soundboard
+
+![Deckster phone soundboard with demonstration data](docs/img/phone-soundboard-v0.7.0.png)
+
+Twelve assigned pads show starter sounds, with Others and Me destinations. [Open full size](docs/img/phone-soundboard-v0.7.0.png).
+
+### Devices
+
+![Deckster phone devices with demonstration data](docs/img/phone-devices-v0.7.0.png)
+
+Choose the PC microphone and listening device. This example uses the virtual microphone and headphones. [Open full size](docs/img/phone-devices-v0.7.0.png).
+
+### Media — music and video playing
+
+![Deckster phone media — music and video playing with demonstration data](docs/img/phone-media-v0.7.0.png)
+
+Two fictional examples are shown playing: Night Drive in Spotify and City Lights After Dark in Google Chrome. Artwork, titles and pause/skip controls show how active media appears. The Media capture uses a taller view to show all the artwork and controls. [Open full size](docs/img/phone-media-v0.7.0.png).
 
 ## What you can control
 
