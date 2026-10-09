@@ -58,7 +58,7 @@ The public build includes **16 CC0 starter sounds**. CC0 means they can be used 
 
 ## Phone screens
 
-Actual v0.7.0 phone screens with demonstration data. Every image is **3840 pixels wide**. Open the full-size links to zoom in.
+Actual v0.7.0 phone screens with demonstration data. Every image is **5120 × 2304 pixels**, in a **20:9 landscape phone ratio**. Open the full-size links to zoom in.
 
 ### Mixer
 
@@ -82,7 +82,7 @@ Choose the PC microphone and listening device. This example uses the virtual mic
 
 ![Deckster phone media — music and video playing with demonstration data](docs/img/phone-media-v0.7.0.png)
 
-Two fictional examples are shown playing: Night Drive in Spotify and City Lights After Dark in Google Chrome. Artwork, titles and pause/skip controls show how active media appears. The Media capture uses a taller view to show all the artwork and controls. [Open full size](docs/img/phone-media-v0.7.0.png).
+Three fictional examples are shown playing side by side: Night Drive in Spotify, City Lights After Dark in Google Chrome and Coastline in VLC media player. Each source has artwork, a title and its own pause/skip controls. [Open full size](docs/img/phone-media-v0.7.0.png).
 
 ## What you can control
 
